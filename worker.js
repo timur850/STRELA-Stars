@@ -154,7 +154,7 @@ export class Store {
     const kb = { inline_keyboard: [[{ text: "⭐ Купить звёзды", web_app: { url: origin + "/" } }]] };
     if (m.text && m.text.startsWith("/start")) {
       return this.tg("sendMessage", { chat_id: m.chat.id, parse_mode: "HTML", reply_markup: kb,
-        text: `⭐ <b>${NAME}</b>\n\nTelegram Stars на любой юзернейм — без KYC и автоматически.\nОплата: Монобанк, CryptoBot${(await this.settings()).on.ru ? ", карта РФ" : ""}.\n\nЖми кнопку ниже 👇` });
+        text: `⭐ <b>${NAME}</b>\n\nTelegram Stars на любой юзернейм — без KYC и автоматически.\n\nЖми кнопку ниже 👇` });
     }
     if (m.photo || m.document) {
       const ids = (await this.s.get("u:" + m.from.id)) || [];
