@@ -1,0 +1,21 @@
+name = "strela-stars"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+# не стирать секреты, добавленные в панели Cloudflare
+keep_vars = true
+
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
+
+[[durable_objects.bindings]]
+name = "STORE"
+class_name = "Store"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Store"]
+
+[triggers]
+crons = ["* * * * *"]
