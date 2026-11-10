@@ -42,6 +42,7 @@ const DEF = {
   ttl: 30,                                    // минут на оплату
   notifyUnmatched: true,
 };
+let HTML_TAG = "";
 const METHOD = { mono: "Монобанк", cp: "CryptoBot", ru: "Карта РФ" };
 const CUR = { mono: "₴", cp: "$", ru: "₽" };
 const STATUS = { new: "ждёт оплаты", paid: "оплачен, в очереди", sending: "отправляется", done: "выполнен", check: "нужна проверка", expired: "время вышло", canceled: "отменён", rejected: "отклонён" };
@@ -50,8 +51,13 @@ const merge = (a, b) => { for (const k of Object.keys(b || {})) a[k] = b[k] && t
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
-    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html"))
-      return new Response(HTML, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } });
+    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+      // ETag: повторное открытие мини-аппа не качает страницу заново (ответ 304)
+      HTML_TAG = HTML_TAG || '"' + (await sha(HTML)).slice(0, 16) + '"';
+      const h = { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache", etag: HTML_TAG };
+      if (req.headers.get("if-none-match") === HTML_TAG) return new Response(null, { status: 304, headers: h });
+      return new Response(HTML, { headers: h });
+    }
     if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
     return env.STORE.get(env.STORE.idFromName("main")).fetch(req);
   },

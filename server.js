@@ -3,6 +3,7 @@
 // и бот сам перепривязывается к новому адресу при каждом запуске.
 import { register } from "node:module";
 import http from "node:http";
+import zlib from "node:zlib";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -63,8 +64,15 @@ http.createServer(async (req, res) => {
     const body = chunks.length ? Buffer.concat(chunks) : undefined;
     const headers = new Headers(); for (const [k, v] of Object.entries(req.headers)) if (typeof v === "string") headers.set(k, v);
     const r = await worker.fetch(new Request((ORIGIN || "http://localhost:" + PORT) + req.url, { method: req.method, headers, body: req.method === "GET" || req.method === "HEAD" ? undefined : body }), env);
-    res.writeHead(r.status, Object.fromEntries(r.headers));
-    res.end(Buffer.from(await r.arrayBuffer()));
+    const out = Object.fromEntries(r.headers);
+    let buf = Buffer.from(await r.arrayBuffer());
+    // сжатие: страница ~100 КБ → ~20 КБ, через туннель грузится в разы быстрее
+    if (buf.length > 1024 && /gzip/.test(req.headers["accept-encoding"] || "") && /text|json|javascript/.test(out["content-type"] || "")) {
+      buf = zlib.gzipSync(buf); out["content-encoding"] = "gzip"; out["vary"] = "accept-encoding";
+    }
+    out["content-length"] = String(buf.length);
+    res.writeHead(r.status, out);
+    res.end(buf);
   } catch (e) { console.log("http", e); res.writeHead(500); res.end("error"); }
 }).listen(PORT, "127.0.0.1", () => console.log("STRELA STARS слушает порт " + PORT));
 
@@ -72,8 +80,16 @@ setInterval(() => store.fetch(new Request("https://do/tick", { method: "POST" })
 
 async function link(origin) {
   ORIGIN = origin;
-  const r = await store.fetch(new Request(origin + "/setup"));
-  console.log((await r.text()) + "\nМини-апп: " + origin + "/");
+  // адрес trycloudflare появляется в DNS не сразу — Telegram может отказать в вебхуке, тогда пробуем ещё
+  for (let i = 1; ; i++) {
+    const r = await store.fetch(new Request(origin + "/setup"));
+    const t = await r.text();
+    if (r.ok && t.startsWith("✅")) { console.log(t + "\nМини-апп: " + origin + "/"); break; }
+    if (ORIGIN !== origin) return;   // туннель уже сменился
+    console.log(`Вебхук не встал (попытка ${i}): ${t}`);
+    if (i >= 20) { console.log("Не удалось привязать вебхук — проверь BOT_TOKEN в .env"); return; }
+    await new Promise(r => setTimeout(r, 10000));
+  }
   // вебхук Монобанка тоже переезжает на новый адрес
   const sec = (await store.s.get("sec")) || {};
   if (sec.monoToken) {
