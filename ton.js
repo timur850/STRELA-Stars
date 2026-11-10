@@ -214,7 +214,8 @@ export const commentCell = text => {
 
 // ---------- toncenter ----------
 export class Toncenter {
-  constructor(apiKey) { this.key = apiKey || ""; this.last = 0; }
+  // настоящий ключ toncenter — 64 hex-символа; заглушку вроде "0" игнорируем
+  constructor(apiKey) { this.key = /^[0-9a-f]{64}$/i.test(String(apiKey || "").trim()) ? String(apiKey).trim() : ""; this.last = 0; }
   async call(path, opt = {}) {
     for (let i = 0; i < 4; i++) {
       const wait = this.last + (this.key ? 120 : 1100) - Date.now(); if (wait > 0) await new Promise(r => setTimeout(r, wait));
