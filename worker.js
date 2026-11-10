@@ -67,7 +67,10 @@ export default {
 };
 
 export class Store {
-  constructor(state, env) { this.state = state; this.s = state.storage; this.env = env; this.busy = false; this.mbusy = false; this.tc = new T.Toncenter(env.TONCENTER_KEY); }
+  constructor(state, env) {
+    // при вставке с телефона в секрет часто попадает пробел/перенос — убираем
+    for (const k of ["BOT_TOKEN", "WALLET_MNEMONIC", "WALLET_ADDRESS", "TONCENTER_KEY"]) if (typeof env[k] === "string") env[k] = env[k].trim();
+    this.state = state; this.s = state.storage; this.env = env; this.busy = false; this.mbusy = false; this.tc = new T.Toncenter(env.TONCENTER_KEY); }
 
   // ---------- общие ----------
   async tg(method, params) {
@@ -130,7 +133,7 @@ export class Store {
       if (p.startsWith("/api/") && req.method === "POST") {
         const body = await req.json().catch(() => ({}));
         const u = await checkInitData(body.initData || "", this.env.BOT_TOKEN);
-        if (!u || !u.id) return json({ ok: false, err: "Открой магазин через бота" }, 401);
+        if (!u || !u.id) return json({ ok: false, err: body.initData ? "Подпись Telegram не сошлась: BOT_TOKEN в Cloudflare от другого бота. Проверь токен и открой /setup" : "Открой магазин через бота" }, 401);
         await this.seen(u);
         return json(await this.api(p.slice(5), u, body));
       }
