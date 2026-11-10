@@ -284,7 +284,9 @@ export class Store {
     // 12 слов: пробуем все способы и берём тот, чей ключ совпадает с ключом кошелька в сети
     const addrS = CONFIG.WALLET_ADDRESS || this.env.WALLET_ADDRESS;
     if (!addrS) throw new Error("впиши WALLET_ADDRESS");
-    const want = (await this.tc.getNum(T.rawAddr(T.parseAddr(addrS)), "get_public_key")).toString(16).padStart(64, "0");
+    let want;
+    try { want = (await this.tc.getNum(T.rawAddr(T.parseAddr(addrS)), "get_public_key")).toString(16).padStart(64, "0"); }
+    catch { throw new Error("кошелёк не активирован — закинь на него немного TON и отправь с него любую транзакцию (например, 0.01 TON самому себе)"); }
     for (const c of await T.keyCandidates(this.env.WALLET_MNEMONIC)) if (T.hex(c.key.publicKey) === want) return (this._key = c.key);
     throw new Error("сид-фраза не от этого кошелька (проверь WALLET_ADDRESS)");
   }
@@ -294,10 +296,10 @@ export class Store {
       const addrS = CONFIG.WALLET_ADDRESS || this.env.WALLET_ADDRESS;
       if (!addrS) throw new Error("впиши WALLET_ADDRESS в config.js");
       const a = T.parseAddr(addrS); w.raw = T.rawAddr(a); w.address = T.friendly(a, false);
-      const key = await this.key(); w.pub = T.hex(key.publicKey);
       const info = await this.tc.info(w.raw);
       w.balance = String(info.balance || 0);
-      if (info.state !== "active") throw new Error("кошелёк не активирован — отправь с него хотя бы одну транзакцию");
+      if (info.state !== "active") throw new Error(`кошелёк не активирован (баланс ${(Number(w.balance) / 1e9).toFixed(2)} TON) — закинь на него TON и отправь с него любую транзакцию, например 0.01 TON самому себе`);
+      const key = await this.key(); w.pub = T.hex(key.publicKey);
       const code = T.parseBoc(info.code), data = T.parseBoc(info.data);
       w.version = T.CODE_HASH[T.hex(await code.hash())];
       if (!w.version) throw new Error("неизвестный тип кошелька (нужен v4r2 или W5)");
