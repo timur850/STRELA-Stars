@@ -181,6 +181,19 @@ function rBuy() {
   if (S.to) checkTo();
   upd();
 }
+// цена в магазине обновляется каждые 15 секунд по свежему курсу TON
+setInterval(async () => {
+  if (!S.D || S.tab !== "buy" || S.order || document.hidden) return;
+  const r = await fetch("/api/rates", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ initData: W ? W.initData : "" }) }).then(x => x.json()).catch(() => null);   // тихо, без тостов
+  if (!r || !r.ok || S.tab !== "buy" || S.order) return;
+  const onChanged = JSON.stringify(r.on) !== JSON.stringify(S.D.shop.on);
+  S.D.shop.rates = r.rates; S.D.shop.on = r.on;
+  const typing = document.activeElement && document.activeElement.tagName === "INPUT";
+  if (onChanged && !typing) return rBuy();
+  if (!$("#qty")) return;
+  V.querySelectorAll(".chips button").forEach(b => { const sm = b.querySelector("small"); if (sm && S.method) sm.textContent = price(S.method, +b.dataset.q) + " " + PM[S.method].cur; });
+  upd();
+}, 15000);
 function meTo() { if (!S.D.me.username) return toast("У тебя нет юзернейма — укажи его в настройках Telegram"); S.to = S.D.me.username; $("#to").value = S.to; checkTo(); }
 let toSeq = 0;
 async function checkTo() {
@@ -306,7 +319,13 @@ async function oAct(id, act) {
 function aShop() {
   const s = S.A.settings;
   $("#ab").innerHTML = `
-  <div class="card"><h2>Курс — цена 1 ★</h2>
+  <div class="card"><h2>📈 Автокурс</h2>
+    <div class="tg">Считать цену автоматически ${sw("auto_on", s.auto.on)}</div>
+    <div class="fl">Наценка, %</div><input class="fi" id="markup" type="number" step="0.5" value="${s.auto.markup}">
+    <div class="mut" style="font-size:13px;line-height:1.5">${S.A.fx ? `Курс TON: <b>${S.A.fx.ton.usd.toFixed(3)} $</b> · <b>${S.A.fx.ton.uah.toFixed(2)} ₴</b> · <b>${S.A.fx.ton.rub.toFixed(1)} ₽</b> <span style="opacity:.7">(${S.A.fx.src}, обновляется каждые 15 сек)</span><br>` : "Курс TON пока не получен<br>"}
+      Себестоимость 1 ★ на Fragment: <b>${(S.A.starUsd || s.auto.usdPerStar).toFixed(4)} $</b>${S.A.starUsd ? " (по последней покупке)" : " (примерно, уточнится после первой покупки)"}<br>
+      ${s.auto.on ? `Сейчас покупатель платит за 1 ★: <b>${S.A.live.uah} ₴</b> · <b>${S.A.live.usd} $</b> · <b>${S.A.live.rub} ₽</b>` : "Автокурс выключен — действует курс ниже"}</div></div>
+  <div class="card"><h2>Ручной курс — цена 1 ★</h2><div class="mut" style="font-size:12.5px;margin-bottom:6px">Используется, только когда автокурс выключен</div>
     <div class="fl">Монобанк, ₴ за 1 ★</div><input class="fi" id="r_uah" type="number" step="0.001" value="${s.rates.uah}">
     <div class="fl">CryptoBot, $ за 1 ★</div><input class="fi" id="r_usd" type="number" step="0.0001" value="${s.rates.usd}">
     <div class="fl">Карта РФ, ₽ за 1 ★</div><input class="fi" id="r_rub" type="number" step="0.01" value="${s.rates.rub}">
@@ -322,7 +341,7 @@ function aShop() {
   const prev = () => { const u = +$("#r_uah").value, d = +$("#r_usd").value, r = +$("#r_rub").value; $("#rprev").textContent = `100 ★ = ${Math.ceil(100 * u)} ₴ · ${(Math.ceil(100 * d * 100) / 100).toFixed(2)} $ · ${Math.ceil(100 * r)} ₽`; };
   ["r_uah", "r_usd", "r_rub"].forEach(i => $("#" + i).oninput = prev); prev();
 }
-function saveShop() { save({ rates: { uah: $("#r_uah").value, usd: $("#r_usd").value, rub: $("#r_rub").value }, on: { mono: isOn("on_mono"), cp: isOn("on_cp"), ru: isOn("on_ru") }, min: $("#min").value, max: $("#max").value, ttl: $("#ttl").value, maxTonPerStar: $("#mtp").value }); }
+function saveShop() { save({ auto: { on: isOn("auto_on"), markup: $("#markup").value }, rates: { uah: $("#r_uah").value, usd: $("#r_usd").value, rub: $("#r_rub").value }, on: { mono: isOn("on_mono"), cp: isOn("on_cp"), ru: isOn("on_ru") }, min: $("#min").value, max: $("#max").value, ttl: $("#ttl").value, maxTonPerStar: $("#mtp").value }); }
 function aPay() {
   const s = S.A.settings, f = S.A.flags;
   $("#ab").innerHTML = `

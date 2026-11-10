@@ -33,7 +33,8 @@ async function checkInitData(initData, token) {
 }
 
 const DEF = {
-  rates: { uah: 0, rub: 0, usd: 0 },         // цена 1 ★ в каждой валюте — ставится в админке
+  rates: { uah: 0, rub: 0, usd: 0 },         // цена 1 ★ в каждой валюте — ставится в админке (если автокурс выключен)
+  auto: { on: true, markup: 5, usdPerStar: 0.015 },   // автокурс: цена = себестоимость на Fragment по курсу TON + наценка %
   min: 50, max: 10000,
   on: { mono: true, cp: true, ru: false },
   mono: { card: "", holder: "", account: "0" },
@@ -81,6 +82,31 @@ export class Store {
   }
   async settings() { return merge(structuredClone(DEF), (await this.s.get("settings")) || {}); }
   async sec() { return (await this.s.get("sec")) || {}; }
+
+  // ---------- автокурс ----------
+  // курс TON к $, ₴, ₽ — обновляется не чаще раза в 15 секунд (при каждом открытии магазина/заказе и по таймеру)
+  async fx(force) {
+    let f = this._fx || await this.s.get("fx");
+    if (f && !force && Date.now() - f.at < 15000) return (this._fx = f);
+    const get = async (url, pick) => { const r = await fetch(url, { headers: { accept: "application/json" } }); if (!r.ok) throw new Error(url + " " + r.status); return pick(await r.json()); };
+    const sources = [
+      ["tonapi", () => get("https://tonapi.io/v2/rates?tokens=ton&currencies=usd,uah,rub", j => { const p = j.rates.TON.prices; return { usd: p.USD, uah: p.UAH, rub: p.RUB }; })],
+      ["coingecko", () => get("https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd,uah,rub", j => j["the-open-network"])],
+    ];
+    for (const [src, fn] of sources) {
+      try { const t = await fn(); if (t.usd > 0 && t.uah > 0 && t.rub > 0) { f = { at: Date.now(), src, ton: { usd: +t.usd, uah: +t.uah, rub: +t.rub } }; await this.s.put("fx", f); return (this._fx = f); } }
+      catch (e) { console.log("fx", src, e.message); }
+    }
+    return f || null;   // источники недоступны — оставляем последний известный курс
+  }
+  // цена 1 ★ в ₴ / $ / ₽ с учётом автокурса
+  async curRates(st) {
+    if (!st.auto.on) return st.rates;
+    const f = await this.fx(); if (!f) return { uah: 0, usd: 0, rub: 0 };
+    const usd = ((await this.s.get("starUsd")) || st.auto.usdPerStar) * (1 + st.auto.markup / 100);   // себестоимость $ за 1 ★ + наценка
+    const k = c => f.ton[c] / f.ton.usd;
+    return { usd: Math.ceil(usd * 1e5) / 1e5, uah: Math.ceil(usd * k("uah") * 1e4) / 1e4, rub: Math.ceil(usd * k("rub") * 1e3) / 1e3 };
+  }
   async botName() {
     let n = await this.s.get("botname");
     if (!n) { const me = await this.tg("getMe", {}); if (me.ok) { n = me.result.username; await this.s.put("botname", n); } }
@@ -379,6 +405,7 @@ export class Store {
     o.status = "done"; o.doneAt = Date.now(); o.ton = inf.amount; o.err = ""; await this.putO(o); await this.closeO(o);
     const s = (await this.s.get("stats")) || { orders: 0, stars: 0, uah: 0, usd: 0, rub: 0, ton: 0 };
     s.orders++; s.stars += o.qty; s.ton += Number(inf.amount) / 1e9;
+    try { const f = await this.fx(); if (f && o.qty) { const v = Number(inf.amount) / 1e9 * f.ton.usd / o.qty; if (v > 0.005 && v < 0.05) await this.s.put("starUsd", v); } } catch {}   // реальная цена звезды на Fragment
     s[{ mono: "uah", cp: "usd", ru: "rub" }[o.method]] += Number(o.price);
     await this.s.put("stats", s);
     if (o.method === "ru") {
@@ -419,8 +446,12 @@ export class Store {
       const m = ids.length ? await this.s.get(ids.map(i => "o:" + i)) : new Map();
       return { ok: true, name: NAME, support: CONFIG.SUPPORT, bot: await this.botName(), role: owner ? "owner" : checker ? "checker" : "",
         me: { id: u.id, username: u.username || "", first: u.first_name || "" },
-        shop: { rates: st.rates, min: st.min, max: st.max, on: { mono: st.on.mono && st.rates.uah > 0, cp: st.on.cp && st.rates.usd > 0, ru: st.on.ru && st.rates.rub > 0 }, ttl: st.ttl },
+        shop: await (async () => { const R = await this.curRates(st); return { rates: R, auto: st.auto.on, min: st.min, max: st.max, on: { mono: st.on.mono && R.uah > 0, cp: st.on.cp && R.usd > 0, ru: st.on.ru && R.rub > 0 }, ttl: st.ttl }; })(),
         orders: ids.map(i => m.get("o:" + i)).filter(Boolean).map(o => this.view(o)) };
+    }
+    if (act === "rates") {   // мини-апп обновляет цену каждые 15 секунд
+      const R = await this.curRates(st);
+      return { ok: true, rates: R, on: { mono: st.on.mono && R.uah > 0, cp: st.on.cp && R.usd > 0, ru: st.on.ru && R.rub > 0 } };
     }
     if (act === "recipient") {
       const to = low(b.to); if (!/^[a-z0-9_]{4,32}$/.test(to)) return { ok: false, err: "Неверный юзернейм" };
@@ -446,7 +477,7 @@ export class Store {
     const to = low(b.to), qty = Math.floor(Number(b.qty)), method = String(b.method || "");
     if (!/^[a-z0-9_]{4,32}$/.test(to)) return { ok: false, err: "Укажи юзернейм получателя" };
     if (!(qty >= st.min && qty <= st.max)) return { ok: false, err: `Количество: от ${st.min} до ${st.max} ⭐` };
-    const rate = { mono: st.rates.uah, cp: st.rates.usd, ru: st.rates.rub }[method];
+    const R = await this.curRates(st), rate = { mono: R.uah, cp: R.usd, ru: R.rub }[method];
     if (!st.on[method] || !(rate > 0)) return { ok: false, err: "Этот способ оплаты сейчас выключен" };
     const recent = ((await this.s.get("u:" + u.id)) || []).slice(-5), rm = recent.length ? await this.s.get(recent.map(i => "o:" + i)) : new Map();
     if ([...rm.values()].filter(o => o && o.status === "new").length >= 3) return { ok: false, err: "У тебя уже 3 неоплаченных заказа — оплати или отмени их" };
@@ -500,6 +531,7 @@ export class Store {
       const sec = await this.sec();
       return { ok: true, role: "owner", settings: st, origin,
         flags: { monoToken: !!sec.monoToken, cpToken: !!sec.cpToken, cookies: !!sec.cookies, mnemonic: !!this.env.WALLET_MNEMONIC, walletAddr: CONFIG.WALLET_ADDRESS || this.env.WALLET_ADDRESS || "", monoHook: !!(await this.s.get("monoHook")) },
+        fx: await this.fx(), live: await this.curRates(st), starUsd: await this.s.get("starUsd"),
         wallet: await this.s.get("wallet"), stats: await this.s.get("stats"), debt: await this.s.get("ruDebt"),
         queue: (await this.openOrders()).filter(o => o.status === "paid" || o.status === "sending").length,
         orders: await listOrders(() => true) };
@@ -507,6 +539,9 @@ export class Store {
     if (act === "set") {
       const p = b.patch || {};
       if (p.rates) for (const k of ["uah", "rub", "usd"]) if (p.rates[k] !== undefined) st.rates[k] = Math.max(0, Number(p.rates[k]) || 0);
+      if (p.auto) { if (p.auto.on !== undefined) st.auto.on = !!p.auto.on;
+        if (p.auto.markup !== undefined) st.auto.markup = Math.min(500, Math.max(0, Number(p.auto.markup) || 0));
+        if (p.auto.usdPerStar !== undefined) st.auto.usdPerStar = Math.min(0.05, Math.max(0.005, Number(p.auto.usdPerStar) || DEF.auto.usdPerStar)); }
       if (p.min !== undefined) st.min = Math.max(50, Math.floor(Number(p.min)) || 50);
       if (p.max !== undefined) st.max = Math.min(1000000, Math.max(st.min, Math.floor(Number(p.max)) || st.min));
       if (p.on) for (const k of ["mono", "cp", "ru"]) if (p.on[k] !== undefined) st.on[k] = !!p.on[k];
