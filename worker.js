@@ -272,7 +272,14 @@ export class Store {
   async key() {
     if (this._key) return this._key;
     if (!this.env.WALLET_MNEMONIC) throw new Error("нет секрета WALLET_MNEMONIC в Cloudflare");
-    return (this._key = await T.keyFromMnemonic(this.env.WALLET_MNEMONIC));
+    const words = String(this.env.WALLET_MNEMONIC).trim().split(/\s+/).length;
+    if (words === 24) return (this._key = await T.keyFromMnemonic(this.env.WALLET_MNEMONIC));
+    // 12 слов: пробуем все способы и берём тот, чей ключ совпадает с ключом кошелька в сети
+    const addrS = CONFIG.WALLET_ADDRESS || this.env.WALLET_ADDRESS;
+    if (!addrS) throw new Error("впиши WALLET_ADDRESS");
+    const want = (await this.tc.getNum(T.rawAddr(T.parseAddr(addrS)), "get_public_key")).toString(16).padStart(64, "0");
+    for (const c of await T.keyCandidates(this.env.WALLET_MNEMONIC)) if (T.hex(c.key.publicKey) === want) return (this._key = c.key);
+    throw new Error("сид-фраза не от этого кошелька (проверь WALLET_ADDRESS)");
   }
   async walletCheck() {
     const w = { ok: false, at: Date.now() };

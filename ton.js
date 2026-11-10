@@ -129,9 +129,34 @@ async function hmac512(key, data) {
   const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-512" }, false, ["sign"]);
   return new Uint8Array(await crypto.subtle.sign("HMAC", k, data));
 }
+// 12 (или 18) слов: такие фразы дают Trust Wallet, Bitget, MyTonWallet и др. — это BIP39 + путь m/44'/607'/0'.
+// Возвращаем все варианты ключа; нужный выбирается по публичному ключу кошелька в сети.
+export async function keyCandidates(words) {
+  const phrase = String(words).trim().toLowerCase().split(/\s+/).join(" ");
+  const n = phrase.split(" ").length;
+  if (![12, 18, 24].includes(n)) throw new Error("сид-фраза должна быть из 12 или 24 слов, сейчас " + n);
+  const out = [];
+  const pb = await crypto.subtle.importKey("raw", enc.encode(phrase.normalize("NFKD")), "PBKDF2", false, ["deriveBits"]);
+  const seed = new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-512", salt: enc.encode("mnemonic"), iterations: 2048 }, pb, 512));
+  for (const path of [[44, 607, 0], [44, 607, 0, 0, 0]]) out.push({ kind: "bip39 m/" + path.join("'/") + "'", key: await keyFromSeed(await slip10(seed, path)) });
+  out.push({ kind: "ton", key: await tonNativeKey(phrase) });
+  return out;
+}
+export async function slip10(seed, path) {
+  let I = await hmac512(enc.encode("ed25519 seed"), seed);
+  for (const i of path) {
+    const d = new Uint8Array(37); d.set(I.slice(0, 32), 1);
+    const x = (i | 0x80000000) >>> 0; d[33] = x >>> 24; d[34] = (x >>> 16) & 255; d[35] = (x >>> 8) & 255; d[36] = x & 255;
+    I = await hmac512(I.slice(32), d);
+  }
+  return I.slice(0, 32);
+}
 export async function keyFromMnemonic(words) {
   const phrase = String(words).trim().toLowerCase().split(/\s+/).join(" ");
   if (phrase.split(" ").length !== 24) throw new Error("сид-фраза должна быть из 24 слов");
+  return tonNativeKey(phrase);
+}
+async function tonNativeKey(phrase) {
   const entropy = await hmac512(enc.encode(phrase), new Uint8Array(0));
   const base = await crypto.subtle.importKey("raw", entropy, "PBKDF2", false, ["deriveBits"]);
   const seed = new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-512", salt: enc.encode("TON default seed"), iterations: 100000 }, base, 512));
