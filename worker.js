@@ -162,6 +162,10 @@ export class Store {
       return this.tg("sendMessage", { chat_id: m.chat.id, parse_mode: "HTML", reply_markup: kb,
         text: `⭐ <b>${NAME}</b>\n\nTelegram Stars на любой юзернейм — без KYC и автоматически.\n\nЖми кнопку ниже 👇` });
     }
+    if (m.text && m.text.startsWith("/id")) {
+      return this.tg("sendMessage", { chat_id: m.chat.id, parse_mode: "HTML",
+        text: `Твой ID: <code>${m.from.id}</code>\nЮзернейм: ${m.from.username ? "@" + esc(m.from.username) : "нет"}\nАдмин: ${this.isOwner(m.from) ? "✅ да" : "❌ нет — впиши ID в config.js → OWNERS"}` });
+    }
     if (m.photo || m.document) {
       const ids = (await this.s.get("u:" + m.from.id)) || [];
       let o = null;
