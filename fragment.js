@@ -109,6 +109,17 @@ export async function tonProof({ raw, pub, stateInit, key }, payload, now = Math
   return { account: { address: raw, chain: "-239", publicKey: pub, walletStateInit: stateInit },
     proof: { timestamp: now, domain: { lengthBytes: dom.length, value: "fragment.com" }, payload, signature: btoa(String.fromCharCode(...sig)) } };
 }
+// параметры входа берём со страницы Fragment (там может быть nonce сессии), иначе — стандартные
+function oauthParams(html) {
+  const q = new URLSearchParams(OAUTH_Q), d = { url: false, nonce: false };
+  const u = html.match(/https:\/\/oauth\.telegram\.org\/auth\?([^"'\s<>\\]+)/);
+  if (u) { d.url = true; for (const [k, v] of new URLSearchParams(u[1].replace(/&amp;/g, "&"))) if (k !== "quick_auth" && k !== "embed") q.set(k, v); }
+  const n = html.match(/["']?nonce["']?\s*[:=]\s*["']([A-Za-z0-9_\-.~]{6,})["']/);
+  if (n && !q.get("nonce")) q.set("nonce", n[1]);
+  d.nonce = !!q.get("nonce");
+  const c = html.match(/["']?(?:client_id|bot_id)["']?\s*[:=]\s*["']?(\d{6,})/); if (c && !u) q.set("client_id", c[1]);
+  return { s: q.toString(), d };
+}
 // шаг 1: кошелёк + старт входа через Telegram → { state, link | done }
 export async function loginStart(wallet) {
   const jar = { stel_dt: "-180" };
@@ -118,27 +129,28 @@ export async function loginStart(wallet) {
   const { account, proof } = await tonProof(wallet, wi.ton_proof);
   await fapi(jar, hash, { method: "checkTonProofAuth", account: JSON.stringify(account), device: JSON.stringify(DEVICE), proof: JSON.stringify(proof) });
   if (!jar.stel_ton_token) throw new Error("Fragment не принял кошелёк (нет stel_ton_token)");
-  const state = { jar, hash, ojar: {}, at: Date.now() };
+  const state = { jar, hash, ojar: {}, at: Date.now(), q: oauthParams(html) };
   if (jar.stel_token) return { state, done: true };   // этот кошелёк уже привязан к аккаунту — Telegram не нужен
-  const r = await fetch(`${OAUTH}/auth/auth?${OAUTH_Q}&quick_auth=new`, { headers: { "user-agent": UA, accept: "text/html" } });
+  const r = await fetch(`${OAUTH}/auth/auth?${state.q.s}&quick_auth=new`, { headers: { "user-agent": UA, accept: "text/html" } });
   takeCookies(state.ojar, r);
   const m = (await r.text()).match(/setToken\(['"]([^'"]+)['"]\)/);
   if (!m) throw new Error("Telegram не выдал ссылку для входа");
   state.qtoken = m[1];
   return { state, link: "https://t.me/oauth?startapp=" + m[1] };
 }
+const Q = state => (state.q && state.q.s) || OAUTH_Q;
 // шаг 2: опрос — подтвердил ли владелец вход в Telegram → { status, link?, cookies? }
 export async function loginPoll(state) {
-  const r = await fetch(`${OAUTH}/auth/login?${OAUTH_Q}&qtoken=${encodeURIComponent(state.qtoken)}`, { method: "POST",
-    headers: { cookie: cookieStr(state.ojar), "user-agent": UA, origin: OAUTH, referer: `${OAUTH}/auth/auth?${OAUTH_Q}`, "x-requested-with": "XMLHttpRequest", "content-type": "application/x-www-form-urlencoded" }, body: "" });
+  const r = await fetch(`${OAUTH}/auth/login?${Q(state)}&qtoken=${encodeURIComponent(state.qtoken)}`, { method: "POST",
+    headers: { cookie: cookieStr(state.ojar), "user-agent": UA, origin: OAUTH, referer: `${OAUTH}/auth/auth?${Q(state)}`, "x-requested-with": "XMLHttpRequest", "content-type": "application/x-www-form-urlencoded" }, body: "" });
   takeCookies(state.ojar, r);
   let j; try { j = await r.json(); } catch { throw new Error("Telegram ответил не JSON (HTTP " + r.status + ")"); }
   const st = j && j.status;
   if (st === "refresh") { state.qtoken = String(j.qtoken || state.qtoken); return { status: "wait", link: "https://t.me/oauth?startapp=" + state.qtoken }; }
   if (st === "expired" || st === "declined" || st === "cancelled") return { status: st };
   if (st !== "confirmed") return { status: "wait" };
-  const oh = { cookie: () => cookieStr(state.ojar), ref: `${OAUTH}/auth/auth?${OAUTH_Q}` };
-  const p = await fetch(`${OAUTH}/auth/push?${OAUTH_Q}`, { headers: { cookie: oh.cookie(), "user-agent": UA, referer: oh.ref } });
+  const oh = { cookie: () => cookieStr(state.ojar), ref: `${OAUTH}/auth/auth?${Q(state)}` };
+  const p = await fetch(`${OAUTH}/auth/push?${Q(state)}`, { headers: { cookie: oh.cookie(), "user-agent": UA, referer: oh.ref } });
   takeCookies(state.ojar, p);
   const page = (await p.text()).replace(/\\\//g, "/");
   // варианты, в которых Telegram отдаёт результат входа
@@ -147,16 +159,26 @@ export async function loginPoll(state) {
   for (const mk of ["postMessage(JSON.stringify(", "postMessage(", "onAuth(", "auth_result"]) { const o = embedded(page, mk); if (o) { if (typeof o.result === "string") tries.push(o.result); else if (o.result && typeof o.result === "object") tries.push(JSON.stringify(o.result)); else if (o.user) tries.push(JSON.stringify(o.user)); else if (o.id && o.hash) tries.push(JSON.stringify(o)); } }
   // старый способ виджета: /auth/get → { user: {...} }
   try {
-    const g = await fetch(`${OAUTH}/auth/get?${OAUTH_Q}&bot_id=5444323279`, { method: "POST", headers: { cookie: oh.cookie(), "user-agent": UA, origin: OAUTH, referer: oh.ref, "x-requested-with": "XMLHttpRequest", "content-type": "application/x-www-form-urlencoded" }, body: "" });
+    const g = await fetch(`${OAUTH}/auth/get?${Q(state)}&bot_id=5444323279`, { method: "POST", headers: { cookie: oh.cookie(), "user-agent": UA, origin: OAUTH, referer: oh.ref, "x-requested-with": "XMLHttpRequest", "content-type": "application/x-www-form-urlencoded" }, body: "" });
     const j = await g.json(); if (j && j.user) tries.push(JSON.stringify(j.user)); else if (j && typeof j.result === "string") tries.push(j.result);
   } catch {}
   const errs = [];
-  for (const auth of [...new Set(tries)]) {
-    try { await fapi(state.jar, state.hash, { method: "logIn", auth }); } catch (e) { errs.push(e.message); continue; }
+  const jwtClaims = t => { try { return JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch { return null; } };
+  const variants = [];
+  for (const t of [...new Set(tries)]) {
+    variants.push({ auth: t });
+    const c = /^[\w-]+\.[\w-]+\.[\w-]+$/.test(t) && jwtClaims(t);
+    if (c) { state.claims = Object.keys(c).join(","); const user = JSON.stringify(c);
+      variants.push({ id_token: t }, { auth: JSON.stringify({ id_token: t }) }, { auth: JSON.stringify({ id_token: t, user: c }) }, { auth: t, id_token: t }, { auth: btoa(JSON.stringify({ id_token: t })) }, { auth: user }); }
+  }
+  for (const v of variants) {
+    try { await fapi(state.jar, state.hash, { method: "logIn", ...v }); } catch (e) { errs.push(e.message); continue; }
     if (state.jar.stel_token) return { status: "done" };
   }
   // ничего не подошло — показываем «форму» страницы без секретов, чтобы понять, что поменялось
   const shape = page.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/[A-Za-z0-9_\-]{16,}/g, "•").replace(/\s+/g, " ").slice(0, 400);
-  throw new Error(`Telegram не вернул результат входа (HTTP ${p.status}, вариантов ${tries.length}${errs.length ? ", Fragment: " + errs[0] : ""}). Пришли скрин: ${shape}`);
+  const d = (state.q && state.q.d) || {};
+  if (tries.length) throw new Error(`Fragment не принял вход (${errs[0] || "нет stel_token"}). Пришли скрин: попыток ${variants.length}, токен: ${state.claims || "не JWT"}, ссылка входа на странице Fragment: ${d.url ? "есть" : "нет"}, nonce: ${d.nonce ? "есть" : "нет"}`);
+  throw new Error(`Telegram не вернул результат входа (HTTP ${p.status}). Пришли скрин: ${shape}`);
 }
 export const loginCookies = jar => cookieStr({ stel_ssid: jar.stel_ssid, stel_dt: jar.stel_dt || "-180", stel_token: jar.stel_token, stel_ton_token: jar.stel_ton_token });
