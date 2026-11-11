@@ -1,6 +1,8 @@
 name = "strela-stars"
 main = "worker.js"
 compatibility_date = "2025-09-01"
+# чтобы воркеры одного аккаунта (STRELA STARS ↔ STRELA CASE) могли обращаться друг к другу по *.workers.dev
+compatibility_flags = ["global_fetch_strictly_public"]
 # не стирать секреты, добавленные в панели Cloudflare
 keep_vars = true
 
