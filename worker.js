@@ -137,7 +137,8 @@ export class Store {
   }
   isOwner(u) { return !!u && CONFIG.OWNERS.some(o => low(o) === low(u.username) || String(o) === String(u.id)); }
   async isChecker(u, st) { st = st || await this.settings(); return !!u && st.ru.checkers.some(o => low(o) === low(u.username) || String(o) === String(u.id)); }
-  async seen(u) { if (u && u.username && u.id) { const k = "seen:" + low(u.username); if ((await this.s.get(k)) !== u.id) await this.s.put(k, u.id); } }
+  async seen(u) { if (u && u.id && !(this._since || (this._since = new Set())).has(u.id)) { this._since.add(u.id); if (!(await this.s.get("since:" + u.id))) await this.s.put("since:" + u.id, Date.now()); }
+    if (u && u.username && u.id) { const k = "seen:" + low(u.username); if ((await this.s.get(k)) !== u.id) await this.s.put(k, u.id); } }
   async idsOf(list) {
     const out = new Set();
     for (const x of list) { if (/^\d+$/.test(String(x))) out.add(Number(x)); else { const id = await this.s.get("seen:" + low(x)); if (id) out.add(id); } }
@@ -436,6 +437,11 @@ export class Store {
     try { const f = await this.fx(); if (f && f.tonUsd && o.qty) { const v = Number(inf.amount) / 1e9 * f.tonUsd / o.qty; if (v > 0.005 && v < 0.05) await this.s.put("starUsd", v); } } catch {}   // реальная цена звезды на Fragment
     s[{ mono: "uah", cp: "usd", ru: "rub" }[o.method]] += Number(o.price);
     await this.s.put("stats", s);
+    const us = (await this.s.get("us:" + o.uid)) || { orders: 0, stars: 0, uah: 0, usd: 0, rub: 0, gifts: 0, first: Date.now() };
+    us.orders++; us.stars += o.qty; us[{ mono: "uah", cp: "usd", ru: "rub" }[o.method]] += Number(o.price); us.last = Date.now();
+    if (o.uname && low(o.to) !== low(o.uname)) us.gifts++;   // звёзды кому-то другому — подарок
+    us.max = Math.max(us.max || 0, o.qty);
+    await this.s.put("us:" + o.uid, us);
     if (o.method === "ru") {
       const d = (await this.s.get("ruDebt")) || { orders: 0, stars: 0, rub: 0, ton: 0, since: Date.now() };
       d.orders++; d.stars += o.qty; d.rub += Number(o.price); d.ton += Number(inf.amount) / 1e9; await this.s.put("ruDebt", d);
@@ -476,6 +482,12 @@ export class Store {
         me: { id: u.id, username: u.username || "", first: u.first_name || "" },
         shop: await (async () => { const R = await this.curRates(st); return { rates: R, auto: st.auto.on, min: st.min, max: st.max, on: { mono: st.on.mono && R.uah > 0, cp: st.on.cp && R.usd > 0, ru: st.on.ru && R.rub > 0 }, ttl: st.ttl }; })(),
         orders: ids.map(i => m.get("o:" + i)).filter(Boolean).map(o => this.view(o)) };
+    }
+    if (act === "profile") {
+      const us = (await this.s.get("us:" + u.id)) || { orders: 0, stars: 0, uah: 0, usd: 0, rub: 0, gifts: 0 };
+      const ids = (await this.s.get("u:" + u.id)) || [], m = ids.length ? await this.s.get(ids.map(i => "o:" + i)) : new Map();
+      const open = [...m.values()].filter(o => o && ["new", "paid", "sending", "check"].includes(o.status)).length;
+      return { ok: true, stats: us, open, since: (await this.s.get("since:" + u.id)) || us.first || Date.now() };
     }
     if (act === "rates") {   // мини-апп обновляет цену каждые 15 секунд
       const R = await this.curRates(st);

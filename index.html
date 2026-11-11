@@ -80,7 +80,7 @@ select.fi option{color:#000}
 .spin{width:54px;height:54px;border-radius:50%;border:5px solid rgba(255,255,255,.12);border-top-color:var(--acc);animation:sp 1s linear infinite;margin:6px auto 12px}
 @keyframes sp{to{transform:rotate(360deg)}}
 .nav{position:fixed;left:50%;transform:translateX(-50%);bottom:10px;width:calc(100% - 24px);max-width:456px;display:flex;gap:4px;padding:7px;border-radius:32px;background:rgba(30,34,56,.95);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.07);z-index:5}
-.nav button{flex:1;border:1px solid transparent;background:none;color:var(--muted);font:800 14.5px Nunito,sans-serif;display:flex;align-items:center;justify-content:center;padding:13px 4px;border-radius:24px}
+.nav button{flex:1;border:1px solid transparent;background:none;color:var(--muted);font:800 14px Nunito,sans-serif;display:flex;align-items:center;justify-content:center;padding:13px 4px;border-radius:24px}
 .nav button svg{display:none}
 .nav button.on{background:#2c3158;color:#fff;border-color:rgba(255,255,255,.08)}
 .nav .adm{display:none}
@@ -88,6 +88,12 @@ select.fi option{color:#000}
 .tabs2::-webkit-scrollbar{display:none}
 .tabs2 button{border:1px solid var(--line);background:var(--card);color:var(--muted);font:800 13px Nunito,sans-serif;padding:9px 13px;border-radius:14px;white-space:nowrap}
 .tabs2 button.on{background:#2c3158;color:#fff;border-color:rgba(255,255,255,.12)}
+.pf{display:flex;align-items:center;gap:14px}
+.pf .av{width:64px;height:64px;border-radius:50%;flex:none;background:linear-gradient(135deg,#6a8bff,#8a5cf6);display:flex;align-items:center;justify-content:center;font:800 26px Unbounded,Nunito,sans-serif;color:#fff;overflow:hidden;box-shadow:0 6px 20px rgba(110,100,255,.35)}
+.pf .av img{width:100%;height:100%;object-fit:cover}
+.pf b{font-size:19px;display:block}.pf small{color:var(--muted);font-weight:800}
+.lvl{display:flex;align-items:center;gap:10px;margin-bottom:10px}.lvl .ic{font-size:30px}.lvl b{font-size:17px}
+.bar{height:10px;border-radius:6px;background:var(--card2);overflow:hidden}.bar i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,#ffd45a,#ffa53a)}
 .kv{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .kv div{background:var(--card2);border-radius:16px;padding:10px 12px}
 .kv b{display:block;font-size:18px}.kv small{color:var(--muted);font-weight:800;font-size:12px}
@@ -113,6 +119,7 @@ a{color:var(--acc)}
 <nav class="nav" id="nav">
   <button data-t="buy" class="on"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5L2.5 9.4l6.6-.9z"/></svg>Купить</button>
   <button data-t="orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>Заказы</button>
+  <button data-t="profile">Профиль</button>
   <button data-t="admin" class="adm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Админ</button>
 </nav>
 <div class="toast" id="toast"></div>
@@ -153,6 +160,7 @@ function render() {
   showBack(false);
   if (S.tab === "buy") return rBuy();
   if (S.tab === "orders") return rOrders();
+  if (S.tab === "profile") return rProfile();
   if (S.tab === "admin") return S.D.role === "owner" ? rAdmin() : rChecker();
 }
 
@@ -263,6 +271,29 @@ function rOrders() {
   const os = S.D.orders;
   V.innerHTML = `<h1 style="margin:4px 2px 12px">Мои заказы</h1>` + (os.length ? `<div class="card">${os.map(oRow).join("")}</div>` : `<div class="card empty"><div>🛒</div><b>Заказов пока нет</b><div class="mut" style="margin-bottom:14px">Купи первые звёзды за пару минут</div><button class="btn" onclick="setTab('buy')">Купить звёзды</button></div>`);
   V.querySelectorAll(".ol").forEach(e => e.onclick = () => openOrder(os.find(o => o.id === +e.dataset.id), rOrders));
+}
+// ---------- профиль ----------
+const LEVELS = [[0, "🌱", "Новичок"], [500, "⭐", "Любитель звёзд"], [2500, "💫", "Коллекционер"], [10000, "🌟", "Звёздный"], [50000, "👑", "Легенда"]];
+async function rProfile() {
+  const me = S.D.me, tu = (W && W.initDataUnsafe && W.initDataUnsafe.user) || {};
+  const name = [tu.first_name || me.first, tu.last_name].filter(Boolean).join(" ") || me.username || "Покупатель";
+  const head = `<div class="card"><div class="pf"><div class="av">${tu.photo_url ? `<img src="${esc(tu.photo_url)}" alt="">` : esc(name.slice(0, 1).toUpperCase())}</div>
+    <div style="min-width:0"><b>${esc(name)}</b><small>${me.username ? "@" + esc(me.username) + " · " : ""}ID <span onclick="copy('${me.id}')" style="text-decoration:underline dotted">${me.id}</span></small></div></div></div>`;
+  if (!S.P) V.innerHTML = head + `<div class="spin" style="margin-top:20px"></div>`;
+  const r = await api("profile"); if (!r.ok || S.tab !== "profile") return; S.P = r;
+  const st = r.stats, lv = LEVELS.filter(l => st.stars >= l[0]).pop(), nx = LEVELS.find(l => st.stars < l[0]);
+  const pct = nx ? Math.min(100, Math.round((st.stars - lv[0]) / (nx[0] - lv[0]) * 100)) : 100;
+  const spent = [st.uah ? fmt(Math.round(st.uah)) + " ₴" : "", st.usd ? st.usd.toFixed(2) + " $" : "", st.rub ? fmt(Math.round(st.rub)) + " ₽" : ""].filter(Boolean).join(" · ") || "—";
+  const days = Math.max(1, Math.ceil((Date.now() - r.since) / 864e5));
+  V.innerHTML = head + `
+  <div class="card"><div class="lvl"><span class="ic">${lv[1]}</span><div><b>${lv[2]}</b><div class="mut" style="font-size:13px">${nx ? `До «${nx[2]}» ${nx[1]} осталось ${fmt(nx[0] - st.stars)} ${SI}` : "Максимальный уровень — ты легенда!"}</div></div></div>
+    <div class="bar"><i style="width:${pct}%"></i></div></div>
+  <div class="card"><div class="kv">
+    <div><b>${fmt(st.stars)} ${SI}</b><small>звёзд куплено</small></div><div><b>${fmt(st.orders)}</b><small>заказов</small></div>
+    <div><b>${fmt(st.max || 0)} ${SI}</b><small>самая большая покупка</small></div><div><b>${fmt(st.gifts || 0)}</b><small>подарков друзьям</small></div>
+  </div><div class="mut" style="margin-top:10px;font-size:13.5px;line-height:1.6">Потрачено: <b style="color:#fff">${spent}</b><br>С нами: <b style="color:#fff">${days} ${days % 10 === 1 && days % 100 !== 11 ? "день" : days % 10 >= 2 && days % 10 <= 4 && (days % 100 < 10 || days % 100 >= 20) ? "дня" : "дней"}</b> (с ${new Date(r.since).toLocaleDateString("ru-RU")})${st.last ? `<br>Последняя покупка: <b style="color:#fff">${dt(st.last)}</b>` : ""}${r.open ? `<br>Заказов в работе: <b style="color:#fff">${r.open}</b>` : ""}</div></div>
+  <button class="btn" onclick="setTab('buy')">⭐ Купить звёзды</button>
+  <div class="mut" style="text-align:center;margin-top:12px;font-size:12.5px">Поддержка: ${esc(S.D.support)}</div>`;
 }
 const oRow = o => `<div class="ol" data-id="${o.id}"><div class="q">${fmt(o.qty)} ${SI}<small>@${esc(o.to)} · #${o.id} · ${dt(o.created)}</small></div><div class="r"><b>${esc(o.price)} ${o.cur}</b><span class="st ${o.status}">${esc(o.statusText)}</span></div></div>`;
 
