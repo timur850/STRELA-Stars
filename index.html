@@ -492,8 +492,14 @@ async function rChecker() {
   try {
     const sp = new URLSearchParams(location.search), stp = (W.initDataUnsafe && W.initDataUnsafe.start_param || "").match(/^case_(mono|ru|cp)_(\d+)$/);
     const m = sp.get("m") || (stp && stp[1]), q = +(sp.get("q") || (stp && stp[2]) || 0);
-    if ((sp.get("dest") === "case" || stp) && r.shop.case) { S.dest = "case"; if (m && r.shop.on[m]) S.method = m; if (q) S.qty = Math.min(r.shop.max, Math.max(r.shop.min, q)); }
+    if ((sp.get("dest") === "case" || stp) && r.shop.case) { S.dest = "case"; if (m && r.shop.on[m]) S.method = m; if (q) S.qty = Math.min(r.shop.max, Math.max(r.shop.min, q)); S.auto = !!(m && r.shop.on[m]); }
   } catch (e) {}
+  if (S.auto) {   // сразу создаём заказ и открываем экран оплаты (повторно не создаём — один раз за открытие)
+    S.auto = false; render();
+    V.innerHTML = `<div class="spin" style="margin-top:30vh"></div>`;
+    const o = await api("create", { dest: "case", qty: S.qty, method: S.method });
+    if (o.ok) { S.D.orders.unshift(o.order); return openOrder(o.order, () => rBuy()); }
+  }
   if (r.role) document.querySelector(".nav .adm").style.display = "flex";
   if (r.role === "checker") document.querySelector(".nav .adm").lastChild.textContent = "Карта РФ";
   render();

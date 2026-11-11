@@ -136,6 +136,12 @@ export class Store {
     if (!n) { const me = await this.tg("getMe", {}); if (me.ok) { n = me.result.username; await this.s.put("botname", n); } }
     return n || "";
   }
+  // включено ли в @BotFather «главное приложение» (тогда ссылка t.me/бот?startapp=… сразу открывает мини-апп)
+  async mainApp() {
+    const c = await this.s.get("mainapp"); if (c && Date.now() - c.t < 600e3) return c.v;
+    const me = await this.tg("getMe", {}); const v = !!(me.ok && me.result.has_main_web_app);
+    await this.s.put("mainapp", { t: Date.now(), v }); return v;
+  }
   caseOn() { return !!(CONFIG.CASE && CONFIG.CASE.url && String(this.env.CASE_KEY || "").trim().length >= 16); }
   // зачисление на баланс казино (идемпотентно: повтор того же заказа не зачислит дважды)
   async caseCredit(o) {
@@ -191,7 +197,7 @@ export class Store {
         return new Response("ok");
       }
       if (p === "/cp") return this.onCryptoPay(req);
-      if (p === "/botname") return new Response(JSON.stringify({ bot: await this.botName(), case: this.caseOn() }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
+      if (p === "/botname") return new Response(JSON.stringify({ bot: await this.botName(), case: this.caseOn(), app: await this.mainApp() }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
       if (p.startsWith("/api/") && req.method === "POST") {
         const body = await req.json().catch(() => ({}));
         const u = await checkInitData(body.initData || "", this.env.BOT_TOKEN);
