@@ -15,6 +15,7 @@ import * as F from "./fragment.js";
 const NAME = CONFIG.NAME || "STRELA STARS";
 const enc = new TextEncoder();
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+const dst = o => o.dest === "case" ? "баланс " + ((CONFIG.CASE && CONFIG.CASE.name) || "казино") : "@" + o.to;
 const low = s => String(s || "").replace(/^@/, "").trim().toLowerCase();
 const esc = s => String(s ?? "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
 const sha = async s => T.hex(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(s))));
@@ -135,6 +136,16 @@ export class Store {
     if (!n) { const me = await this.tg("getMe", {}); if (me.ok) { n = me.result.username; await this.s.put("botname", n); } }
     return n || "";
   }
+  caseOn() { return !!(CONFIG.CASE && CONFIG.CASE.url && String(this.env.CASE_KEY || "").trim().length >= 16); }
+  // зачисление на баланс казино (идемпотентно: повтор того же заказа не зачислит дважды)
+  async caseCredit(o) {
+    const r = await fetch(CONFIG.CASE.url.replace(/\/$/, "") + "/ext/credit", { method: "POST",
+      headers: { "content-type": "application/json", "x-ext-key": String(this.env.CASE_KEY).trim() },
+      body: JSON.stringify({ id: "stars:" + o.id, uid: String(o.uid), name: o.uname || "", a: o.qty, from: NAME }) });
+    const j = await r.json().catch(() => ({ ok: false, err: "казино ответило HTTP " + r.status }));
+    if (!j.ok) throw new Error(j.err === "bad key" ? "ключ не совпадает (CASE_KEY здесь и EXT_KEY в казино должны быть одинаковые)" : (j.err || "ошибка казино"));
+    return j;
+  }
   isOwner(u) { return !!u && CONFIG.OWNERS.some(o => low(o) === low(u.username) || String(o) === String(u.id)); }
   async isChecker(u, st) { st = st || await this.settings(); return !!u && st.ru.checkers.some(o => low(o) === low(u.username) || String(o) === String(u.id)); }
   async seen(u) { if (u && u.id && !(this._since || (this._since = new Set())).has(u.id)) { this._since.add(u.id); if (!(await this.s.get("since:" + u.id))) await this.s.put("since:" + u.id, Date.now()); }
@@ -158,7 +169,7 @@ export class Store {
   async openOrders() { return this.many(await this.open()); }
   async wake(ms = 1000) { const cur = await this.s.getAlarm(); const at = Date.now() + ms; if (!cur || cur > at) await this.s.setAlarm(at); }
   view(o, full) {
-    const v = { id: o.id, to: o.to, qty: o.qty, method: o.method, price: o.price, cur: CUR[o.method], status: o.status, statusText: STATUS[o.status], created: o.created, doneAt: o.doneAt, pay: o.pay, expires: o.expires };
+    const v = { id: o.id, to: o.to, dest: o.dest || "", qty: o.qty, method: o.method, price: o.price, cur: CUR[o.method], status: o.status, statusText: STATUS[o.status], created: o.created, doneAt: o.doneAt, pay: o.pay, expires: o.expires };
     if (full) Object.assign(v, { uid: o.uid, uname: o.uname, err: o.err, by: o.by, ton: o.ton, tries: o.tries, paidAt: o.paidAt, shot: o.shot });
     return v;
   }
@@ -226,7 +237,7 @@ export class Store {
       if (!o) return this.tg("sendMessage", { chat_id: m.chat.id, text: "Нет заказа с оплатой картой РФ, который ждёт подтверждения. Создай заказ в магазине 👇", reply_markup: kb });
       const st = await this.settings();
       const chk = await this.idsOf(st.ru.checkers.length ? st.ru.checkers : CONFIG.OWNERS);
-      const cap = `🧾 Заказ #${o.id} — карта РФ\n${o.qty} ⭐ → @${o.to}\nСумма: ${o.price} ₽\nОт: ${o.uname || o.uid} (id ${o.uid})`;
+      const cap = `🧾 Заказ #${o.id} — карта РФ\n${o.qty} ⭐ → ${dst(o)}\nСумма: ${o.price} ₽\nОт: ${o.uname || o.uid} (id ${o.uid})`;
       const rm = { inline_keyboard: [[{ text: "✅ Подтвердить", callback_data: "ru:ok:" + o.id }, { text: "❌ Отклонить", callback_data: "ru:no:" + o.id }]] };
       let sent = 0;
       for (const id of chk) {
@@ -268,7 +279,7 @@ export class Store {
     if (o.status !== "new" && o.status !== "expired") return;
     o.status = "paid"; o.paidAt = Date.now(); o.by = by; o.tries = 0; await this.putO(o);
     const ids = await this.open(); if (!ids.includes(o.id)) { ids.push(o.id); await this.setOpen(ids); }
-    await this.tg("sendMessage", { chat_id: o.uid, text: `💳 Оплата заказа #${o.id} получена. Отправляем ${o.qty} ⭐ на @${o.to}…` });
+    await this.tg("sendMessage", { chat_id: o.uid, text: `💳 Оплата заказа #${o.id} получена. Отправляем ${o.qty} ⭐ на ${dst(o)}…` });
     await this.wake(500);
   }
   async cp(method, params) {
@@ -374,6 +385,13 @@ export class Store {
   async deliver() {
     if (this.busy) return; this.busy = true;
     try {
+      // заказы «на баланс казино»: без Fragment и TON — просто зачисляем
+      for (const o of (await this.openOrders()).filter(o => o.status === "paid" && o.dest === "case")) {
+        try { await this.caseCredit(o); await this.finish(o, { amount: 0 }); }
+        catch (e) { o.tries = (o.tries || 0) + 1; o.err = "казино: " + e.message;
+          if (o.tries >= 5) { o.status = "check"; await this.closeO(o); await this.notifyOwners(`⚠️ Заказ #${o.id} (${o.qty} ⭐ → ${dst(o)}) не зачислился: ${esc(e.message)}`); }
+          await this.putO(o); await this.wake(30000); }
+      }
       const inf = await this.s.get("inflight");
       if (inf) {
         const w = await this.s.get("wallet"), o = await this.getO(inf.id);
@@ -391,10 +409,10 @@ export class Store {
           await this.s.delete("inflight");
           o.tries = (o.tries || 0) + 1; o.err = "транзакция не прошла";
           o.status = o.tries >= 3 ? "check" : "paid"; await this.putO(o);
-          if (o.status === "check") { await this.closeO(o); await this.notifyOwners(`⚠️ Заказ #${o.id} (${o.qty} ⭐ → @${o.to}) не удалось отправить 3 раза. Проверь кошелёк и нажми «Повторить» в админке.`); }
+          if (o.status === "check") { await this.closeO(o); await this.notifyOwners(`⚠️ Заказ #${o.id} (${o.qty} ⭐ → ${dst(o)}) не удалось отправить 3 раза. Проверь кошелёк и нажми «Повторить» в админке.`); }
         } else { await this.wake(10000); return; }
       }
-      const paid = (await this.openOrders()).filter(o => o.status === "paid").sort((a, b) => a.paidAt - b.paidAt);
+      const paid = (await this.openOrders()).filter(o => o.status === "paid" && o.dest !== "case").sort((a, b) => a.paidAt - b.paidAt);
       const o = paid[0]; if (!o) return;
       const sec = await this.sec(), st = await this.settings();
       const stop = async msg => {
@@ -439,14 +457,14 @@ export class Store {
     await this.s.put("stats", s);
     const us = (await this.s.get("us:" + o.uid)) || { orders: 0, stars: 0, uah: 0, usd: 0, rub: 0, gifts: 0, first: Date.now() };
     us.orders++; us.stars += o.qty; us[{ mono: "uah", cp: "usd", ru: "rub" }[o.method]] += Number(o.price); us.last = Date.now();
-    if (o.uname && low(o.to) !== low(o.uname)) us.gifts++;   // звёзды кому-то другому — подарок
+    if (o.dest !== "case" && o.uname && low(o.to) !== low(o.uname)) us.gifts++;   // звёзды кому-то другому — подарок
     us.max = Math.max(us.max || 0, o.qty);
     await this.s.put("us:" + o.uid, us);
     if (o.method === "ru") {
       const d = (await this.s.get("ruDebt")) || { orders: 0, stars: 0, rub: 0, ton: 0, since: Date.now() };
       d.orders++; d.stars += o.qty; d.rub += Number(o.price); d.ton += Number(inf.amount) / 1e9; await this.s.put("ruDebt", d);
     }
-    await this.tg("sendMessage", { chat_id: o.uid, text: `✅ Готово! ${o.qty} ⭐ отправлены на @${o.to}.\nСпасибо за покупку в ${NAME}!` });
+    await this.tg("sendMessage", { chat_id: o.uid, text: `✅ Готово! ${o.qty} ⭐ отправлены на ${dst(o)}.\nСпасибо за покупку в ${NAME}!` });
   }
 
   // ---------- периодическая работа ----------
@@ -480,7 +498,7 @@ export class Store {
       const m = ids.length ? await this.s.get(ids.map(i => "o:" + i)) : new Map();
       return { ok: true, name: NAME, support: CONFIG.SUPPORT, bot: await this.botName(), role: owner ? "owner" : checker ? "checker" : "",
         me: { id: u.id, username: u.username || "", first: u.first_name || "" },
-        shop: await (async () => { const R = await this.curRates(st); return { rates: R, auto: st.auto.on, min: st.min, max: st.max, on: { mono: st.on.mono && R.uah > 0, cp: st.on.cp && R.usd > 0, ru: st.on.ru && R.rub > 0 }, ttl: st.ttl }; })(),
+        shop: await (async () => { const R = await this.curRates(st); return { rates: R, auto: st.auto.on, case: this.caseOn() ? CONFIG.CASE.name : "", min: st.min, max: st.max, on: { mono: st.on.mono && R.uah > 0, cp: st.on.cp && R.usd > 0, ru: st.on.ru && R.rub > 0 }, ttl: st.ttl }; })(),
         orders: ids.map(i => m.get("o:" + i)).filter(Boolean).map(o => this.view(o)) };
     }
     if (act === "profile") {
@@ -514,8 +532,10 @@ export class Store {
     return this.admin(act, u, b, st, owner);
   }
   async create(u, b, st) {
-    const to = low(b.to), qty = Math.floor(Number(b.qty)), method = String(b.method || "");
-    if (!/^[a-z0-9_]{4,32}$/.test(to)) return { ok: false, err: "Укажи юзернейм получателя" };
+    const toCase = b.dest === "case", qty = Math.floor(Number(b.qty)), method = String(b.method || "");
+    if (toCase && !this.caseOn()) return { ok: false, err: "Пополнение казино сейчас выключено" };
+    const to = toCase ? low(CONFIG.CASE.name).replace(/[^a-z0-9_]/g, "_") : low(b.to);
+    if (!toCase && !/^[a-z0-9_]{4,32}$/.test(to)) return { ok: false, err: "Укажи юзернейм получателя" };
     if (!(qty >= st.min && qty <= st.max)) return { ok: false, err: `Количество: от ${st.min} до ${st.max} ⭐` };
     const R = await this.curRates(st), rate = { mono: R.uah, cp: R.usd, ru: R.rub }[method];
     if (!st.on[method] || !(rate > 0)) return { ok: false, err: "Этот способ оплаты сейчас выключен" };
@@ -523,7 +543,7 @@ export class Store {
     if ([...rm.values()].filter(o => o && o.status === "new").length >= 3) return { ok: false, err: "У тебя уже 3 неоплаченных заказа — оплати или отмени их" };
     const id = ((await this.s.get("seq")) || 1000) + 1; await this.s.put("seq", id);
     const now = Date.now();
-    const o = { id, uid: u.id, uname: u.username ? "@" + u.username : (u.first_name || ""), to, qty, method, status: "new", created: now, expires: now + st.ttl * 60000 * (method === "ru" ? 4 : 1) };
+    const o = { id, uid: u.id, uname: u.username ? "@" + u.username : (u.first_name || ""), to, ...(toCase ? { dest: "case" } : {}), qty, method, status: "new", created: now, expires: now + st.ttl * 60000 * (method === "ru" ? 4 : 1) };
     if (method === "mono") {
       if (!st.mono.card) return { ok: false, err: "Оплата Монобанком ещё не настроена" };
       const base = Math.ceil(qty * rate) * 100;
@@ -652,7 +672,7 @@ export class Store {
       } else if (b.act === "done") {
         if (!["check", "paid"].includes(o.status)) return { ok: false, err: "Нельзя" };
         o.status = "done"; o.doneAt = Date.now(); o.by = (o.by || "") + ", выдан вручную " + who; await this.putO(o); await this.closeO(o);
-        await this.tg("sendMessage", { chat_id: o.uid, text: `✅ Заказ #${o.id} выполнен: ${o.qty} ⭐ на @${o.to}.` });
+        await this.tg("sendMessage", { chat_id: o.uid, text: `✅ Заказ #${o.id} выполнен: ${o.qty} ⭐ на ${dst(o)}.` });
       } else if (b.act === "cancel") {
         if (["done", "sending"].includes(o.status)) return { ok: false, err: "Нельзя" };
         o.status = "canceled"; await this.putO(o); await this.closeO(o);
