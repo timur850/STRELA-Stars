@@ -488,6 +488,12 @@ async function rChecker() {
   if (!W || !W.initData) { V.innerHTML = `<div class="card empty" style="margin-top:30vh"><div>⭐</div><b>Открой магазин через бота в Telegram</b></div>`; return; }
   const r = await api("init"); if (!r.ok) { V.innerHTML = `<div class="card empty" style="margin-top:30vh"><div>⚠️</div><b>${esc(r.err || "Ошибка загрузки")}</b></div>`; return; }
   S.D = r; $("#logo").textContent = r.name; document.title = r.name;
+  // пришли из казино: ?dest=case&m=mono&q=500 (или start_param case_mono_500)
+  try {
+    const sp = new URLSearchParams(location.search), stp = (W.initDataUnsafe && W.initDataUnsafe.start_param || "").match(/^case_(mono|ru|cp)_(\d+)$/);
+    const m = sp.get("m") || (stp && stp[1]), q = +(sp.get("q") || (stp && stp[2]) || 0);
+    if ((sp.get("dest") === "case" || stp) && r.shop.case) { S.dest = "case"; if (m && r.shop.on[m]) S.method = m; if (q) S.qty = Math.min(r.shop.max, Math.max(r.shop.min, q)); }
+  } catch (e) {}
   if (r.role) document.querySelector(".nav .adm").style.display = "flex";
   if (r.role === "checker") document.querySelector(".nav .adm").lastChild.textContent = "Карта РФ";
   render();

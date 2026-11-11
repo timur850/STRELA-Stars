@@ -191,6 +191,7 @@ export class Store {
         return new Response("ok");
       }
       if (p === "/cp") return this.onCryptoPay(req);
+      if (p === "/botname") return new Response(JSON.stringify({ bot: await this.botName(), case: this.caseOn() }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
       if (p.startsWith("/api/") && req.method === "POST") {
         const body = await req.json().catch(() => ({}));
         const u = await checkInitData(body.initData || "", this.env.BOT_TOKEN);
@@ -222,6 +223,13 @@ export class Store {
     const m = upd.message; if (!m || !m.from || m.chat.type !== "private") return;
     await this.seen(m.from);
     const kb = { inline_keyboard: [[{ text: "⭐ Купить звёзды", web_app: { url: origin + "/" } }]] };
+    const cs = m.text && m.text.match(/^\/start\s+case_(mono|ru|cp)_(\d{1,7})$/);
+    if (cs && this.caseOn()) {
+      const st = await this.settings(), q = Math.min(st.max, Math.max(st.min, +cs[2])), mn = { mono: "картой UA (Монобанк)", ru: "картой РФ", cp: "через CryptoBot" }[cs[1]];
+      return this.tg("sendMessage", { chat_id: m.chat.id, parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: `💳 Оплатить ${q} ⭐`, web_app: { url: `${origin}/?dest=case&m=${cs[1]}&q=${q}` } }]] },
+        text: `🎰 <b>Пополнение ${esc(CONFIG.CASE.name)}</b>\n\n${q} ⭐ ${mn}. После оплаты звёзды сами придут на твой баланс в ${esc(CONFIG.CASE.name)}.\n\nЖми кнопку 👇` });
+    }
     if (m.text && m.text.startsWith("/start")) {
       return this.tg("sendMessage", { chat_id: m.chat.id, parse_mode: "HTML", reply_markup: kb,
         text: `⭐ <b>${NAME}</b>\n\nTelegram Stars на любой юзернейм — без KYC и автоматически.\n\nЖми кнопку ниже 👇` });
