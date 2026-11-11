@@ -138,7 +138,7 @@ export class Store {
   }
   // включено ли в @BotFather «главное приложение» (тогда ссылка t.me/бот?startapp=… сразу открывает мини-апп)
   async mainApp() {
-    const c = await this.s.get("mainapp"); if (c && Date.now() - c.t < 600e3) return c.v;
+    const c = await this.s.get("mainapp"); if (c && Date.now() - c.t < (c.v ? 600e3 : 60e3)) return c.v;   // «выключено» перепроверяем каждую минуту
     const me = await this.tg("getMe", {}); const v = !!(me.ok && me.result.has_main_web_app);
     await this.s.put("mainapp", { t: Date.now(), v }); return v;
   }
