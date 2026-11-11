@@ -88,17 +88,37 @@ export class Store {
   // курс TON к $, ₴, ₽ — обновляется не чаще раза в 15 секунд (при каждом открытии магазина/заказе и по таймеру)
   async fx(force) {
     let f = this._fx || await this.s.get("fx");
-    if (f && !force && Date.now() - f.at < 15000) return (this._fx = f);
-    const get = async (url, pick) => { const r = await fetch(url, { headers: { accept: "application/json" } }); if (!r.ok) throw new Error(url + " " + r.status); return pick(await r.json()); };
-    const sources = [
-      ["tonapi", () => get("https://tonapi.io/v2/rates?tokens=ton&currencies=usd,uah,rub", j => { const p = j.rates.TON.prices; return { usd: p.USD, uah: p.UAH, rub: p.RUB }; })],
-      ["coingecko", () => get("https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd,uah,rub", j => j["the-open-network"])],
-    ];
-    for (const [src, fn] of sources) {
-      try { const t = await fn(); if (t.usd > 0 && t.uah > 0 && t.rub > 0) { f = { at: Date.now(), src, ton: { usd: +t.usd, uah: +t.uah, rub: +t.rub } }; await this.s.put("fx", f); return (this._fx = f); } }
-      catch (e) { console.log("fx", src, e.message); }
+    if (f && f.ton && !force && Date.now() - f.at < 15000) return (this._fx = f);
+    const errs = [];
+    const get = async (url, pick) => {
+      const r = await fetch(url, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (compatible; StrelaStars/1.0)" }, cf: { cacheTtl: 10 } });
+      if (!r.ok) throw new Error(r.status); return pick(await r.json());
+    };
+    const first = async list => { for (const [n, fn] of list) { try { const v = await fn(); if (v && Object.values(v).every(x => x > 0)) return { v, n }; throw new Error("пусто"); } catch (e) { errs.push(n + ": " + e.message); } } return null; };
+    // 1) сразу TON в $, ₴, ₽
+    let full = await first([
+      ["tonapi", () => get("https://tonapi.io/v2/rates?tokens=ton&currencies=usd,uah,rub", j => { const p = j.rates.TON.prices; return { usd: +p.USD, uah: +p.UAH, rub: +p.RUB }; })],
+      ["coingecko", () => get("https://api.coingecko.com/api/v3/simple/price?ids=the-open-network&vs_currencies=usd,uah,rub", j => { const t = j["the-open-network"]; return { usd: +t.usd, uah: +t.uah, rub: +t.rub }; })],
+    ]);
+    // 2) запасной путь: TON/$ с биржи × курс $ к ₴ и ₽
+    if (!full) {
+      const ton = await first([
+        ["binance", () => get("https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT", j => ({ usd: +j.price }))],
+        ["okx", () => get("https://www.okx.com/api/v5/market/ticker?instId=TON-USDT", j => ({ usd: +j.data[0].last }))],
+        ["bybit", () => get("https://api.bybit.com/v5/market/tickers?category=spot&symbol=TONUSDT", j => ({ usd: +j.result.list[0].lastPrice }))],
+      ]);
+      const fiat = ton && await first([
+        ["er-api", () => get("https://open.er-api.com/v6/latest/USD", j => ({ uah: +j.rates.UAH, rub: +j.rates.RUB }))],
+        ["currency-api", () => get("https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json", j => ({ uah: +j.usd.uah, rub: +j.usd.rub }))],
+      ]);
+      if (ton && fiat) full = { v: { usd: ton.v.usd, uah: ton.v.usd * fiat.v.uah, rub: ton.v.usd * fiat.v.rub }, n: ton.n + "+" + fiat.n };
     }
-    return f || null;   // источники недоступны — оставляем последний известный курс
+    if (full) { f = { at: Date.now(), src: full.n, ton: full.v }; await this.s.put("fx", f); return (this._fx = f); }
+    console.log("fx failed", errs.join("; "));
+    const old = f && f.ton ? f : null;
+    const keep = old || { at: 0, ton: null };
+    keep.err = errs.join("; ").slice(0, 300); this._fxErr = keep.err;
+    return old;   // источники недоступны — оставляем последний известный курс
   }
   // цена 1 ★ в ₴ / $ / ₽ с учётом автокурса
   async curRates(st) {
@@ -538,7 +558,7 @@ export class Store {
       return { ok: true, role: "owner", settings: st, origin,
         flags: { monoToken: !!sec.monoToken, cpToken: !!sec.cpToken, cookies: !!sec.cookies, mnemonic: !!this.env.WALLET_MNEMONIC, walletAddr: CONFIG.WALLET_ADDRESS || this.env.WALLET_ADDRESS || "", monoHook: !!(await this.s.get("monoHook")) },
         fragLink: await (async () => { const f = await this.s.get("fraglogin"); return f && f.qtoken && Date.now() - f.at < 5 * 60e3 ? "https://t.me/oauth?startapp=" + f.qtoken : ""; })(),
-        fx: await this.fx(), live: await this.curRates(st), starUsd: await this.s.get("starUsd"),
+        fx: await this.fx(), fxErr: this._fxErr || "", live: await this.curRates(st), starUsd: await this.s.get("starUsd"),
         wallet: await this.s.get("wallet"), stats: await this.s.get("stats"), debt: await this.s.get("ruDebt"),
         queue: (await this.openOrders()).filter(o => o.status === "paid" || o.status === "sending").length,
         orders: await listOrders(() => true) };

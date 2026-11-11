@@ -322,7 +322,7 @@ function aShop() {
   <div class="card"><h2>📈 Автокурс</h2>
     <div class="tg">Считать цену автоматически ${sw("auto_on", s.auto.on)}</div>
     <div class="fl">Наценка, %</div><input class="fi" id="markup" type="number" step="0.5" value="${s.auto.markup}">
-    <div class="mut" style="font-size:13px;line-height:1.5">${S.A.fx ? `Курс TON: <b>${S.A.fx.ton.usd.toFixed(3)} $</b> · <b>${S.A.fx.ton.uah.toFixed(2)} ₴</b> · <b>${S.A.fx.ton.rub.toFixed(1)} ₽</b> <span style="opacity:.7">(${S.A.fx.src}, обновляется каждые 15 сек)</span><br>` : "Курс TON пока не получен<br>"}
+    <div class="mut" style="font-size:13px;line-height:1.5">${S.A.fx ? `Курс TON: <b>${S.A.fx.ton.usd.toFixed(3)} $</b> · <b>${S.A.fx.ton.uah.toFixed(2)} ₴</b> · <b>${S.A.fx.ton.rub.toFixed(1)} ₽</b> <span style="opacity:.7">(${S.A.fx.src}, обновляется каждые 15 сек)</span><br>` : `<span class="bad">Курс TON не получен</span>${S.A.fxErr ? ` <span style="opacity:.7">(${esc(S.A.fxErr)})</span>` : ""}<br>`}
       Себестоимость 1 ★ на Fragment: <b>${(S.A.starUsd || s.auto.usdPerStar).toFixed(4)} $</b>${S.A.starUsd ? " (по последней покупке)" : " (примерно, уточнится после первой покупки)"}<br>
       ${s.auto.on ? `Сейчас покупатель платит за 1 ★: <b>${S.A.live.uah} ₴</b> · <b>${S.A.live.usd} $</b> · <b>${S.A.live.rub} ₽</b>` : "Автокурс выключен — действует курс ниже"}</div></div>
   <div class="card"><h2>Ручной курс — цена 1 ★</h2><div class="mut" style="font-size:12.5px;margin-bottom:6px">Используется, только когда автокурс выключен</div>
