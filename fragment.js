@@ -73,7 +73,9 @@ function embedded(text, marker) {
   let s = text.slice(i + marker.length).trimStart(), depth = 0, str = false, esc = false;
   for (let j = 0; j < s.length; j++) { const ch = s[j];
     if (str) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') str = false; continue; }
-    if (ch === '"') str = true; else if (ch === "{") depth++; else if (ch === "}" && --depth === 0) { try { return JSON.parse(s.slice(0, j + 1)); } catch { return null; } } }
+    if (ch === '"') str = true; else if (ch === "{") depth++; else if (ch === "}" && --depth === 0) { const t = s.slice(0, j + 1);
+      try { return JSON.parse(t); } catch {}
+      try { return JSON.parse(t.replace(/'([^'\\]*)'/g, '"$1"').replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":')); } catch { return null; } } }
   return null;
 }
 async function fpage(jar) {
@@ -135,12 +137,26 @@ export async function loginPoll(state) {
   if (st === "refresh") { state.qtoken = String(j.qtoken || state.qtoken); return { status: "wait", link: "https://t.me/oauth?startapp=" + state.qtoken }; }
   if (st === "expired" || st === "declined" || st === "cancelled") return { status: st };
   if (st !== "confirmed") return { status: "wait" };
-  const p = await fetch(`${OAUTH}/auth/push?${OAUTH_Q}`, { headers: { cookie: cookieStr(state.ojar), "user-agent": UA, referer: `${OAUTH}/auth/auth?${OAUTH_Q}` } });
+  const oh = { cookie: () => cookieStr(state.ojar), ref: `${OAUTH}/auth/auth?${OAUTH_Q}` };
+  const p = await fetch(`${OAUTH}/auth/push?${OAUTH_Q}`, { headers: { cookie: oh.cookie(), "user-agent": UA, referer: oh.ref } });
   takeCookies(state.ojar, p);
-  const t = (await p.text()).match(/tgAuthResult=([A-Za-z0-9_-]+)/);
-  if (!t) throw new Error("Telegram не вернул результат входа");
-  await fapi(state.jar, state.hash, { method: "logIn", auth: t[1] });
-  if (!state.jar.stel_token) throw new Error("Fragment не выдал stel_token после входа");
-  return { status: "done" };
+  const page = (await p.text()).replace(/\\\//g, "/");
+  // варианты, в которых Telegram отдаёт результат входа
+  const tries = [];
+  for (const re of [/tgAuthResult=([A-Za-z0-9_\-=.%]+)/, /["']?(?:result|tgAuthResult|auth_result|id_token)["']?\s*[:=]\s*["']([A-Za-z0-9_\-=.%]{8,})["']/]) { const m = page.match(re); if (m) tries.push(decodeURIComponent(m[1])); }
+  for (const mk of ["postMessage(JSON.stringify(", "postMessage(", "onAuth(", "auth_result"]) { const o = embedded(page, mk); if (o) { if (typeof o.result === "string") tries.push(o.result); else if (o.result && typeof o.result === "object") tries.push(JSON.stringify(o.result)); else if (o.user) tries.push(JSON.stringify(o.user)); else if (o.id && o.hash) tries.push(JSON.stringify(o)); } }
+  // старый способ виджета: /auth/get → { user: {...} }
+  try {
+    const g = await fetch(`${OAUTH}/auth/get?${OAUTH_Q}&bot_id=5444323279`, { method: "POST", headers: { cookie: oh.cookie(), "user-agent": UA, origin: OAUTH, referer: oh.ref, "x-requested-with": "XMLHttpRequest", "content-type": "application/x-www-form-urlencoded" }, body: "" });
+    const j = await g.json(); if (j && j.user) tries.push(JSON.stringify(j.user)); else if (j && typeof j.result === "string") tries.push(j.result);
+  } catch {}
+  const errs = [];
+  for (const auth of [...new Set(tries)]) {
+    try { await fapi(state.jar, state.hash, { method: "logIn", auth }); } catch (e) { errs.push(e.message); continue; }
+    if (state.jar.stel_token) return { status: "done" };
+  }
+  // ничего не подошло — показываем «форму» страницы без секретов, чтобы понять, что поменялось
+  const shape = page.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/[A-Za-z0-9_\-]{16,}/g, "•").replace(/\s+/g, " ").slice(0, 400);
+  throw new Error(`Telegram не вернул результат входа (HTTP ${p.status}, вариантов ${tries.length}${errs.length ? ", Fragment: " + errs[0] : ""}). Пришли скрин: ${shape}`);
 }
 export const loginCookies = jar => cookieStr({ stel_ssid: jar.stel_ssid, stel_dt: jar.stel_dt || "-180", stel_token: jar.stel_token, stel_ton_token: jar.stel_ton_token });
