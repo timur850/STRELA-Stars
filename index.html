@@ -383,11 +383,41 @@ function aWallet() {
     <button class="btn sm" style="margin-top:10px" id="wcb" onclick="wCheck()">Проверить кошелёк</button></div>
   <div class="card"><h2>🧩 Fragment</h2>
     <div class="fl">Куки fragment.com ${f.cookies ? '<span class="ok">— сохранены ✅</span>' : '<span class="bad">— не заданы</span>'}</div>
+    <button class="btn" id="flb" onclick="fLogin()" style="margin:6px 0 4px">🔑 Войти в Fragment через Telegram</button>
+    <div class="mut" id="fls" style="font-size:12.5px;margin-bottom:12px">Бот сам подключит свой кошелёк к Fragment, а тебе останется нажать «Подтвердить» в Telegram. Куки копировать не нужно.</div>
+    <div class="fl">Или вставь куки вручную</div>
     <textarea class="ta" id="fck" placeholder="stel_ssid=...; stel_dt=...; stel_token=...; stel_ton_token=..."></textarea>
     <div class="row"><button class="btn sm" onclick="save({}, {cookies: $('#fck').value})">Сохранить</button><button class="btn ghost sm" onclick="fCheck()">Проверить</button></div>
-    <div class="mut" style="margin-top:10px;font-size:12.5px">На Fragment должен быть пройден KYC и подключён <b>этот же</b> кошелёк. Куки берутся из браузера на компьютере после входа (инструкция в README). Если выдача пишет «обнови куки» — вставь новые.</div></div>`;
+    <div class="mut" style="margin-top:10px;font-size:12.5px">Если Fragment попросит KYC — пройди его на fragment.com. Если выдача пишет «обнови куки» — просто нажми «Войти» ещё раз.</div></div>`;
+  if (S.A.fragLink && !flTimer) fWait(S.A.fragLink, true);   // вернулся из Telegram — продолжаем вход
 }
 async function wCheck() { const b = $("#wcb"); b.disabled = true; b.textContent = "Проверяю… (до 15 сек)"; const r = await api("wallet_check"); if (r.ok) { S.A.wallet = r.wallet; toast(r.wallet.ok ? "Кошелёк в порядке ✅" : "Ошибка: " + r.wallet.err); api("kick"); } aWallet(); }
+// вход в Fragment: бот подключает кошелёк, владелец подтверждает вход в Telegram
+let flTimer = 0;
+async function fLogin() {
+  const b = $("#flb"), st = $("#fls"); b.disabled = true; b.textContent = "Подключаю кошелёк…";
+  const r = await api("frag_login");
+  if (!r.ok) { b.disabled = false; b.textContent = "🔑 Войти в Fragment через Telegram"; return; }
+  if (r.done) return fDone(r);
+  fWait(r.link);
+}
+function fWait(link, resume) {
+  const b = $("#flb"), st = $("#fls"); if (!b) return;
+  b.disabled = false; b.textContent = "📲 Открыть подтверждение в Telegram"; b.onclick = () => { try { W.openTelegramLink(link); } catch (e) { location.href = link; } };
+  st.innerHTML = "Нажми кнопку выше и в Telegram нажми <b>«Подтвердить»</b> (Accept). Потом вернись сюда — бот сам закончит вход. Ждём…";
+  if (!resume) try { W.openTelegramLink(link); } catch (e) {}
+  clearTimeout(flTimer); const t0 = Date.now();
+  const poll = async () => {
+    if (!$("#flb")) return;
+    const r = await fetch("/api/frag_poll", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ initData: W ? W.initData : "" }) }).then(x => x.json()).catch(() => ({ ok: true, wait: true }));
+    if (r.ok && r.done) return fDone(r);
+    if (!r.ok) { flTimer = 0; S.A.fragLink = ""; toast(r.err || "Не получилось"); return aWallet(); }
+    if (r.link && r.link !== link) { link = r.link; $("#flb").onclick = () => { try { W.openTelegramLink(link); } catch (e) { location.href = link; } }; }
+    if (Date.now() - t0 < 5 * 60e3) flTimer = setTimeout(poll, 2000); else { flTimer = 0; S.A.fragLink = ""; toast("Время вышло — нажми «Войти» ещё раз"); aWallet(); }
+  };
+  flTimer = setTimeout(poll, 2000);
+}
+async function fDone(r) { clearTimeout(flTimer); flTimer = 0; S.A.fragLink = ""; toast(r.msg || "Вошёл в Fragment ✅"); S.A.flags.cookies = true; aWallet(); const c = await api("frag_check"); if (c.ok) toast(c.msg); }
 async function fCheck() { const r = await api("frag_check"); if (r.ok) toast(r.msg); }
 function aRu() {
   const s = S.A.settings, d = S.A.debt || {};

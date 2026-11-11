@@ -176,6 +176,12 @@ export const CODE_HASH = {
   "feb5ff6820e2ff0d9483e7e0d62c817d846789fb4ae580c878866d959dabd5c0": "v4r2",
   "20834b7b72b112147e1b2fb457b84e74d1a30f04f737d4f62a668e9552d2b72f": "v5r1",
 };
+// исходные data кошелька (seqno = 0) — из них и кода получается адрес
+export function initialData(version, walletId, pub) {
+  if (version === "v4r2") return beginCell().uint(0, 32).uint(walletId, 32).bytes(pub).bit(0).end();
+  if (version === "v5r1") return beginCell().bit(1).uint(0, 32).uint(walletId, 32).bytes(pub).bit(0).end();
+  throw new Error("кошелёк " + version + " не поддерживается");
+}
 export const stateInitCell = (code, data) => beginCell().uint(0, 2).bit(1).bit(1).bit(0).ref(code).ref(data).end();
 
 export function internalMsg({ to, amount, bounce, payload }) {

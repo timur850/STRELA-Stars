@@ -10,6 +10,7 @@ import { CONFIG } from "./config.js";
 import HTML from "./index.html";
 import * as T from "./ton.js";
 import { Fragment } from "./fragment.js";
+import * as F from "./fragment.js";
 
 const NAME = CONFIG.NAME || "STRELA STARS";
 const enc = new TextEncoder();
@@ -329,16 +330,21 @@ export class Store {
       const code = T.parseBoc(info.code), data = T.parseBoc(info.data);
       w.version = T.CODE_HASH[T.hex(await code.hash())];
       if (!w.version) throw new Error("неизвестный тип кошелька (нужен v4r2 или W5)");
-      const si = T.stateInitCell(code, data);
-      if (T.hex(await si.hash()) !== T.hex(a.hash)) throw new Error("адрес не совпадает с кодом кошелька");
       const pub = await this.tc.getNum(w.raw, "get_public_key");
       if (pub.toString(16).padStart(64, "0") !== w.pub) throw new Error("сид-фраза не от этого кошелька");
       try { w.walletId = Number(await this.tc.getNum(w.raw, "get_subwallet_id")); }
       catch { w.walletId = w.version === "v5r1" ? 2147483409 : 698983191; }
+      // stateInit для TON Connect — исходный (seqno = 0), из него получается адрес; текущие data после переводов уже другие
+      let si = T.stateInitCell(code, T.initialData(w.version, w.walletId, key.publicKey));
+      if (T.hex(await si.hash()) !== T.hex(a.hash)) { si = T.stateInitCell(code, data); if (T.hex(await si.hash()) !== T.hex(a.hash)) throw new Error("адрес не совпадает с кодом кошелька"); }
       w.stateInit = T.b64e(T.serializeBoc(si));
       w.ok = true;
     } catch (e) { w.err = e.message; }
     await this.s.put("wallet", w); return w;
+  }
+  async fragSave(jar) {
+    const sec = await this.sec(); sec.cookies = F.loginCookies(jar); await this.s.put("sec", sec);
+    return { ok: true, done: true, msg: "Вошёл в Fragment ✅ Куки сохранены" };
   }
   async wallet() { const w = await this.s.get("wallet"); return w && w.ok && Date.now() - w.at < 6 * 3600e3 ? w : this.walletCheck(); }
 
@@ -531,6 +537,7 @@ export class Store {
       const sec = await this.sec();
       return { ok: true, role: "owner", settings: st, origin,
         flags: { monoToken: !!sec.monoToken, cpToken: !!sec.cpToken, cookies: !!sec.cookies, mnemonic: !!this.env.WALLET_MNEMONIC, walletAddr: CONFIG.WALLET_ADDRESS || this.env.WALLET_ADDRESS || "", monoHook: !!(await this.s.get("monoHook")) },
+        fragLink: await (async () => { const f = await this.s.get("fraglogin"); return f && f.qtoken && Date.now() - f.at < 5 * 60e3 ? "https://t.me/oauth?startapp=" + f.qtoken : ""; })(),
         fx: await this.fx(), live: await this.curRates(st), starUsd: await this.s.get("starUsd"),
         wallet: await this.s.get("wallet"), stats: await this.s.get("stats"), debt: await this.s.get("ruDebt"),
         queue: (await this.openOrders()).filter(o => o.status === "paid" || o.status === "sending").length,
@@ -564,6 +571,25 @@ export class Store {
       return { ok: true };
     }
     if (act === "wallet_check") return { ok: true, wallet: await this.walletCheck() };
+    if (act === "frag_login") {   // вход в Fragment без копирования кук
+      const w = await this.wallet(); if (!w.ok) return { ok: false, err: "Сначала кошелёк: " + w.err };
+      try {
+        const r = await F.loginStart({ raw: w.raw, pub: w.pub, stateInit: w.stateInit, key: await this.key() });
+        if (r.done) return this.fragSave(r.state.jar);
+        await this.s.put("fraglogin", r.state);
+        return { ok: true, link: r.link };
+      } catch (e) { return { ok: false, err: e.message }; }
+    }
+    if (act === "frag_poll") {
+      const state = await this.s.get("fraglogin"); if (!state || Date.now() - state.at > 5 * 60e3) return { ok: false, err: "Время входа вышло — нажми «Войти» ещё раз" };
+      try {
+        const r = await F.loginPoll(state);
+        if (r.status === "done") { await this.s.delete("fraglogin"); return this.fragSave(state.jar); }
+        await this.s.put("fraglogin", state);
+        if (r.status !== "wait") { await this.s.delete("fraglogin"); return { ok: false, err: r.status === "declined" ? "Вход отклонён в Telegram" : "Время входа вышло — нажми «Войти» ещё раз" }; }
+        return { ok: true, wait: true, link: r.link };
+      } catch (e) { await this.s.delete("fraglogin"); return { ok: false, err: e.message }; }
+    }
     if (act === "frag_check") {
       const sec = await this.sec(); if (!sec.cookies) return { ok: false, err: "Сначала вставь куки" };
       try { const f = new Fragment(sec.cookies); const r = await f.recipient(u.username || "durov", 50); return { ok: true, msg: "Fragment работает ✅ (нашёл " + (r.name || "получателя") + ")" }; }
