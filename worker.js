@@ -149,7 +149,9 @@ export class Store {
       headers: { "content-type": "application/json", "x-ext-key": String(this.env.CASE_KEY).trim() },
       body: JSON.stringify({ id: "stars:" + o.id, uid: String(o.uid), name: o.uname || "", a: o.qty, from: NAME }) });
     const j = await r.json().catch(() => ({ ok: false, err: "казино ответило HTTP " + r.status }));
-    if (!j.ok) throw new Error(j.err === "bad key" ? "ключ не совпадает (CASE_KEY здесь и EXT_KEY в казино должны быть одинаковые)" : (j.err || "ошибка казино"));
+    const mine = String(this.env.CASE_KEY).trim().length;
+    if (!j.ok) throw new Error(j.err === "no key" ? "в казино (воркер strela) не задан секрет EXT_KEY или он короче 16 символов — добавь его и сделай Deploy"
+      : j.err === "bad key" ? `ключ не совпадает: в STRELA STARS CASE_KEY из ${mine} символов${j.len ? `, в казино EXT_KEY из ${j.len}` : ""} — вставь в оба одинаковый` : (j.err || "ошибка казино"));
     return j;
   }
   isOwner(u) { return !!u && CONFIG.OWNERS.some(o => low(o) === low(u.username) || String(o) === String(u.id)); }
