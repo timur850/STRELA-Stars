@@ -456,9 +456,11 @@ export class Store {
       const w = await this.wallet();
       if (!w.ok) return stop("кошелёк: " + w.err);
       if (!sec.cookies) return stop("не вставлены куки Fragment");
-      let q;
-      try { q = await new Fragment(sec.cookies).buy(o.to, o.qty, w); }
+      let q; const frag = new Fragment(sec.cookies);
+      try { q = await frag.buy(o.to, o.qty, w); }
       catch (e) {
+        if (frag.changed) { sec.cookies = frag.cookies; await this.s.put("sec", sec); }
+        if (/access denied|unauthorized|session|not logged/i.test(e.message)) return stop(e.message + " — вход в Fragment слетел или не завершён: Админ → 💎 Кошелёк → «Войти в Fragment через Telegram»");
         if (/куки|не открылся|KYC|verify|login|auth/i.test(e.message)) return stop(e.message);
         o.tries = (o.tries || 0) + 1; o.err = e.message;
         if (o.tries >= 3 || /нет такого пользователя/.test(e.message)) { o.status = "check"; await this.closeO(o); await this.notifyOwners(`⚠️ Заказ #${o.id} (${o.qty} ⭐ → @${esc(o.to)}): ${esc(e.message)}`); }
@@ -478,6 +480,8 @@ export class Store {
       await this.s.put("inflight", { id: o.id, seqno, validUntil, hash: tr.hash, amount: String(q.amount) });
       o.status = "sending"; o.err = ""; await this.putO(o);
       try { await this.tc.send(tr.boc); } catch (e) { o.err = e.message; await this.putO(o); }
+      try { await frag.confirm(q.confirm, tr.boc); } catch (e) { console.log("fragment confirm", e.message); }
+      if (frag.changed) { sec.cookies = frag.cookies; await this.s.put("sec", sec); }
       await this.wake(12000);
     } catch (e) { console.log("deliver", e.stack || e); await this.wake(30000); }
     finally { this.busy = false; }

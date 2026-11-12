@@ -5,49 +5,60 @@ import { parseBoc, commentCell } from "./ton.js";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
 
 export class Fragment {
-  constructor(cookies) { this.cookies = String(cookies || "").trim(); this.hash = ""; }
-  async init() {
-    if (!this.cookies) throw new Error("не вставлены куки Fragment");
-    const r = await fetch("https://fragment.com/stars/buy", { headers: { cookie: this.cookies, "user-agent": UA, accept: "text/html" } });
-    const html = await r.text();
-    const m = html.match(/api\?hash=([0-9a-f]+)/);
-    if (!m) throw new Error("Fragment не открылся (HTTP " + r.status + ") — обнови куки");
-    this.hash = m[1];
-    this.logged = /stel_ton_token|tm-header-ton|Disconnect|logout/i.test(html) || html.includes('"ton_account"');
+  constructor(cookies) {
+    this.jar = {}; this.hash = ""; this.changed = false;
+    for (const part of String(cookies || "").replace(/^cookie:\s*/i, "").split(/;\s*/)) { const i = part.indexOf("="); if (i > 0) this.jar[part.slice(0, i).trim()] = part.slice(i + 1).trim(); }
   }
-  async api(params) {
-    if (!this.hash) await this.init();
-    const r = await fetch("https://fragment.com/api?hash=" + this.hash, {
-      method: "POST",
-      headers: { cookie: this.cookies, "user-agent": UA, "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "x-requested-with": "XMLHttpRequest", origin: "https://fragment.com", referer: "https://fragment.com/stars/buy", accept: "application/json, text/javascript, */*; q=0.01" },
-      body: new URLSearchParams(params).toString() });
-    const t = await r.text(); let j;
-    try { j = JSON.parse(t); } catch { throw new Error("Fragment ответил не JSON (HTTP " + r.status + ")"); }
-    if (j.error) throw new Error("Fragment: " + j.error);
-    return j;
+  get cookies() { return cookieStr(this.jar); }
+  take(r) { const before = this.cookies; takeCookies(this.jar, r); if (this.cookies !== before) this.changed = true; }
+  hdr(page) { return { cookie: this.cookies, "user-agent": UA, referer: page, "x-aj-referer": page, origin: "https://fragment.com",
+    "x-requested-with": "XMLHttpRequest", "sec-fetch-dest": "empty", "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin",
+    accept: "application/json, text/javascript, */*; q=0.01", "content-type": "application/x-www-form-urlencoded; charset=UTF-8" }; }
+  async init() {
+    if (!this.jar.stel_ssid) throw new Error("не вставлены куки Fragment");
+    const r = await fetch("https://fragment.com/stars/buy", { headers: { cookie: this.cookies, "user-agent": UA, accept: "text/html" }, redirect: "manual" });
+    this.take(r);
+    const html = (await r.text()).replace(/\\\//g, "/");
+    const m = html.match(/api\?hash=([0-9a-fA-F]+)/);
+    if (!m) throw new Error("Fragment не открылся (HTTP " + r.status + ") — войди в Fragment заново");
+    this.hash = m[1];
+  }
+  async api(params, page = "https://fragment.com/stars/buy") {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!this.hash || attempt) await this.init();
+      const r = await fetch("https://fragment.com/api?hash=" + this.hash, { method: "POST", redirect: "manual", headers: this.hdr(page), body: new URLSearchParams(params).toString() });
+      this.take(r);
+      const t = await r.text(); let j;
+      try { j = JSON.parse(t); } catch { throw new Error(`Fragment (${params.method}) ответил не JSON (HTTP ${r.status})`); }
+      if (j.error && String(j.error).toLowerCase() === "bad request" && !attempt) continue;   // устарел hash — берём новый
+      if (j.error) throw new Error(`Fragment (${params.method}): ${j.error}`);
+      return j;
+    }
   }
   async recipient(username, qty) {
-    const j = await this.api({ query: String(username).replace(/^@/, ""), quantity: String(qty || ""), method: "searchStarsRecipient" });
+    const j = await this.api({ query: String(username).replace(/^@/, ""), quantity: "", method: "searchStarsRecipient" });
     if (!j.found || !j.found.recipient) throw new Error("на Fragment нет такого пользователя");
     return { recipient: j.found.recipient, name: String(j.found.name || "").replace(/<[^>]+>/g, "") };
   }
-  // → { to, amount (нанотоны), payload Cell, reqId }
+  // → { to, amount (нанотоны), payload Cell, reqId, confirm }
   async buy(username, qty, wallet) {
+    await this.api({ mode: "new", lv: "false", dh: String(Date.now()) + "000000", method: "updateStarsBuyState" });
     const { recipient } = await this.recipient(username, qty);
-    const init = await this.api({ recipient, quantity: String(qty), method: "initBuyStarsRequest" });
+    const init = await this.api({ recipient, quantity: String(qty), payment_method: "ton", method: "initBuyStarsRequest" });
     if (!init.req_id) throw new Error("Fragment не создал заявку");
-    const link = await this.api({
-      transaction: "1", id: init.req_id, show_sender: "0", method: "getBuyStarsLink",
-      account: JSON.stringify({ address: wallet.raw, chain: "-239", walletStateInit: wallet.stateInit, publicKey: wallet.pub }),
-      device: JSON.stringify({ platform: "iphone", appName: "Tonkeeper", appVersion: "5.0.14", maxProtocolVersion: 2,
-        features: ["SendTransaction", { name: "SendTransaction", maxMessages: 4 }] }) });
+    const account = JSON.stringify({ address: wallet.raw, chain: "-239", walletStateInit: wallet.stateInit, publicKey: wallet.pub });
+    const link = await this.api({ transaction: "1", id: init.req_id, show_sender: "0", method: "getBuyStarsLink", account, device: JSON.stringify(DEVICE) });
     const tx = link.transaction, m = tx && tx.messages && tx.messages[0];
     if (!m) throw new Error("Fragment не выдал транзакцию" + (link.need_verify ? " — нужно пройти KYC" : ""));
     if (tx.messages.length !== 1) throw new Error("Fragment вернул " + tx.messages.length + " сообщения — не отправляю");
     let payload = null;
     if (m.payload) { try { payload = parseBoc(m.payload); } catch { payload = commentCell(String(m.payload)); } }
-    return { to: m.address, amount: BigInt(m.amount), payload, reqId: init.req_id };
+    return { to: m.address, amount: BigInt(m.amount), payload, reqId: init.req_id,
+      confirm: { method: String(link.confirm_method || tx.confirm_method || "confirmReq"), params: link.confirm_params || tx.confirm_params || { id: init.req_id }, account } };
+  }
+  // сообщаем Fragment подписанную транзакцию (как это делает сайт после оплаты из кошелька)
+  async confirm(c, boc) {
+    return this.api({ ...c.params, method: c.method, account: c.account, device: JSON.stringify(DEVICE), boc });
   }
 }
 
@@ -181,4 +192,4 @@ export async function loginPoll(state) {
   if (tries.length) throw new Error(`Fragment не принял вход (${errs[0] || "нет stel_token"}). Пришли скрин: попыток ${variants.length}, токен: ${state.claims || "не JWT"}, ссылка входа на странице Fragment: ${d.url ? "есть" : "нет"}, nonce: ${d.nonce ? "есть" : "нет"}`);
   throw new Error(`Telegram не вернул результат входа (HTTP ${p.status}). Пришли скрин: ${shape}`);
 }
-export const loginCookies = jar => cookieStr({ stel_ssid: jar.stel_ssid, stel_dt: jar.stel_dt || "-180", stel_token: jar.stel_token, stel_ton_token: jar.stel_ton_token });
+export const loginCookies = jar => cookieStr({ stel_dt: "-180", ...jar });   // все куки, что выдал Fragment
