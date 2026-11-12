@@ -80,7 +80,7 @@ select.fi option{color:#000}
 .spin{width:54px;height:54px;border-radius:50%;border:5px solid rgba(255,255,255,.12);border-top-color:var(--acc);animation:sp 1s linear infinite;margin:6px auto 12px}
 @keyframes sp{to{transform:rotate(360deg)}}
 .nav{position:fixed;left:50%;transform:translateX(-50%);bottom:10px;width:calc(100% - 24px);max-width:456px;display:flex;gap:4px;padding:7px;border-radius:32px;background:rgba(30,34,56,.95);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.07);z-index:5}
-.nav button{flex:1;border:1px solid transparent;background:none;color:var(--muted);font:800 14px Nunito,sans-serif;display:flex;align-items:center;justify-content:center;padding:13px 4px;border-radius:24px}
+.nav button{flex:1;min-width:0;border:1px solid transparent;background:none;color:var(--muted);font:800 13px Nunito,sans-serif;display:flex;align-items:center;justify-content:center;padding:13px 4px;border-radius:24px}
 .nav button svg{display:none}
 .nav button.on{background:#2c3158;color:#fff;border-color:rgba(255,255,255,.08)}
 .nav .adm{display:none}
@@ -88,6 +88,10 @@ select.fi option{color:#000}
 .tabs2::-webkit-scrollbar{display:none}
 .tabs2 button{border:1px solid var(--line);background:var(--card);color:var(--muted);font:800 13px Nunito,sans-serif;padding:9px 13px;border-radius:14px;white-space:nowrap}
 .tabs2 button.on{background:#2c3158;color:#fff;border-color:rgba(255,255,255,.12)}
+.rvt{display:flex;align-items:center;gap:18px}.rvt .big{font:800 54px/1 Unbounded,Nunito,sans-serif}.rs{color:#ffc83d;letter-spacing:2px}
+.rv{padding:14px 0;border-top:1px solid var(--line)}.rv:first-child{border-top:0;padding-top:2px}.rv .h{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.rv .w{color:var(--muted);font-size:13px;font-weight:800}.rv p{margin:8px 0 0;font-size:15px;line-height:1.4;word-break:break-word}
+.rate{display:flex;justify-content:center;gap:6px;margin:10px 0}.rate button{border:0;background:var(--card2);border-radius:12px;font-size:24px;width:48px;height:48px;filter:grayscale(1);opacity:.55}.rate button.on{filter:none;opacity:1}
 .seg{display:flex;gap:6px;background:var(--card2);border-radius:16px;padding:4px;margin-bottom:10px}
 .seg button{flex:1;border:0;background:none;color:var(--muted);font:800 13.5px Nunito,sans-serif;padding:10px 6px;border-radius:12px}
 .seg button.on{background:#2c3158;color:#fff}
@@ -122,6 +126,7 @@ a{color:var(--acc)}
 <nav class="nav" id="nav">
   <button data-t="buy" class="on"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5L2.5 9.4l6.6-.9z"/></svg>Купить</button>
   <button data-t="orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>Заказы</button>
+  <button data-t="reviews">Отзывы</button>
   <button data-t="profile">Профиль</button>
   <button data-t="admin" class="adm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Админ</button>
 </nav>
@@ -164,6 +169,7 @@ function render() {
   if (S.tab === "buy") return rBuy();
   if (S.tab === "orders") return rOrders();
   if (S.tab === "profile") return rProfile();
+  if (S.tab === "reviews") return rReviews();
   if (S.tab === "admin") return S.D.role === "owner" ? rAdmin() : rChecker();
 }
 
@@ -267,6 +273,7 @@ function rOrder() {
     <button class="btn blue" onclick="toChat()">📸 Отправить скрин в бот</button>`;
   V.innerHTML = `<div class="card" style="text-align:center"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><b>Заказ #${o.id}</b><span class="st ${o.status}">${esc(o.statusText)}</span></div>
     <div style="font:900 22px Nunito,sans-serif;margin-bottom:14px">${fmt(o.qty)} ${SI} → ${o.dest === "case" ? "🎰 " + esc(S.D.shop.case || "казино") : "@" + esc(o.to)}</div><div style="text-align:${waiting && o.method !== "cp" ? "left" : "center"}">${body}</div></div>
+    ${o.status === "done" ? rateBox(o) : ""}
     ${o.status === "new" ? `<button class="btn ghost sm" onclick="cancelO()">Отменить заказ</button>` : `<button class="btn ghost sm" onclick="setTab('buy')">Купить ещё</button>`}`;
 }
 function payCp() { const u = S.order.pay.url; try { u.includes("t.me/") ? W.openTelegramLink(u) : W.openLink(u); } catch (e) { location.href = u; } }
@@ -277,6 +284,29 @@ function rOrders() {
   const os = S.D.orders;
   V.innerHTML = `<h1 style="margin:4px 2px 12px">Мои заказы</h1>` + (os.length ? `<div class="card">${os.map(oRow).join("")}</div>` : `<div class="card empty"><div>🛒</div><b>Заказов пока нет</b><div class="mut" style="margin-bottom:14px">Купи первые звёзды за пару минут</div><button class="btn" onclick="setTab('buy')">Купить звёзды</button></div>`);
   V.querySelectorAll(".ol").forEach(e => e.onclick = () => openOrder(os.find(o => o.id === +e.dataset.id), rOrders));
+}
+// ---------- отзывы ----------
+const stars = n => "★".repeat(n) + "☆".repeat(5 - n);
+async function rReviews() {
+  if (!S.R) V.innerHTML = `<div class="spin" style="margin-top:30vh"></div>`;
+  const r = await api("reviews"); if (!r.ok || S.tab !== "reviews") return; S.R = r;
+  V.innerHTML = `<div class="card"><div class="rvt"><div class="big">${r.n ? r.avg.toFixed(1) : "—"}</div><div><div class="rs" style="font-size:20px">${stars(Math.round(r.avg))}</div>
+    <div class="mut" style="font-size:13.5px;margin-top:4px">${r.n ? `${fmt(r.clients)} ${pl(r.clients, "клиент", "клиента", "клиентов")} · ${fmt(r.n)} ${pl(r.n, "оценка", "оценки", "оценок")}` : "Пока нет отзывов"}</div></div></div></div>
+  <div class="card">${r.list.length ? r.list.map(x => `<div class="rv"><div class="h"><span class="rs">${stars(x.stars)}</span><span class="w">@${esc(x.name)} · ${new Date(x.at).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" })}</span></div>
+    <div class="w" style="margin-top:6px">купил: ${SI} ${fmt(x.qty)} ${pl(x.qty, "звезду", "звезды", "звёзд")}${x.dest === "case" ? " · 🎰 в " + esc(S.D.shop.case || "казино") : ""}</div>${x.text ? `<p>${esc(x.text)}</p>` : ""}</div>`).join("")
+    : `<div class="mut" style="text-align:center;padding:18px 0">Здесь появятся отзывы покупателей.<br>Оставить отзыв можно после выполненного заказа.</div>`}</div>`;
+}
+const pl = (n, a, b, c) => { n = Math.abs(n) % 100; const d = n % 10; return n > 10 && n < 20 ? c : d === 1 ? a : d >= 2 && d <= 4 ? b : c; };
+// оценка в карточке выполненного заказа
+function rateBox(o) {
+  return `<div class="card" style="text-align:center"><b>${o.rv ? "Твоя оценка" : "Оцени покупку"}</b><div class="rate">${[1, 2, 3, 4, 5].map(n => `<button class="${n <= (S.rvS || o.rv || 0) ? "on" : ""}" onclick="S.rvS=${n};rOrder()">⭐</button>`).join("")}</div>
+    <textarea class="ta" id="rvt" maxlength="300" placeholder="Пара слов о покупке (по желанию)" style="min-height:70px"></textarea>
+    <button class="btn sm" onclick="sendRv()">${o.rv ? "Обновить отзыв" : "Отправить отзыв"}</button></div>`;
+}
+async function sendRv() {
+  const o = S.order, n = S.rvS || o.rv; if (!n) return toast("Выбери оценку");
+  const r = await api("review", { id: o.id, stars: n, text: ($("#rvt").value || "").trim() || undefined });
+  if (r.ok) { o.rv = n; S.rvS = 0; S.R = null; haptic(); toast("Спасибо за отзыв! 💜"); rOrder(); }
 }
 // ---------- профиль ----------
 const LEVELS = [[0, "🌱", "Новичок"], [500, "⭐", "Любитель звёзд"], [2500, "💫", "Коллекционер"], [10000, "🌟", "Звёздный"], [50000, "👑", "Легенда"]];
@@ -307,11 +337,18 @@ const oRow = o => `<div class="ol" data-id="${o.id}"><div class="q">${fmt(o.qty)
 async function loadAdmin() { const r = await api("admin"); if (r.ok) S.A = r; return r.ok; }
 async function rAdmin() {
   if (!S.A) { V.innerHTML = `<div class="spin" style="margin-top:30vh"></div>`; if (!(await loadAdmin())) return; }
-  const A = S.A, tabs = [["orders", "📦 Заказы"], ["shop", "⭐ Магазин"], ["pay", "💳 Оплата"], ["wallet", "💎 Кошелёк"], ["ru", "🇷🇺 РФ"]];
+  const A = S.A, tabs = [["orders", "📦 Заказы"], ["shop", "⭐ Магазин"], ["pay", "💳 Оплата"], ["wallet", "💎 Кошелёк"], ["ru", "🇷🇺 РФ"], ["rv", "💬 Отзывы"]];
   V.innerHTML = `<div class="tabs2">${tabs.map(([k, n]) => `<button data-a="${k}" class="${S.at === k ? "on" : ""}">${n}</button>`).join("")}</div><div id="ab"></div>`;
   V.querySelectorAll(".tabs2 button").forEach(b => b.onclick = () => { S.at = b.dataset.a; rAdmin(); });
-  ({ orders: aOrders, shop: aShop, pay: aPay, wallet: aWallet, ru: aRu })[S.at]();
+  ({ orders: aOrders, shop: aShop, pay: aPay, wallet: aWallet, ru: aRu, rv: aRv })[S.at]();
 }
+async function aRv() {
+  $("#ab").innerHTML = `<div class="spin"></div>`;
+  const r = await api("reviews_admin"); if (!r.ok) return;
+  $("#ab").innerHTML = `<div class="card">${r.list.length ? r.list.map(x => `<div class="rv" style="${x.hidden ? "opacity:.45" : ""}"><div class="h"><span class="rs">${stars(x.stars)}</span><span class="w">#${x.id} · @${esc(x.name || String(x.uid))} · ${dt(x.at)}</span></div>
+    ${x.text ? `<p>${esc(x.text)}</p>` : ""}<button class="mini g" style="margin-top:8px" onclick="rvHide(${x.id},${x.hidden ? 0 : 1})">${x.hidden ? "Показать снова" : "Скрыть"}</button></div>`).join("") : `<div class="mut">Отзывов пока нет</div>`}</div>`;
+}
+async function rvHide(id, hide) { const r = await api("review_hide", { id, hide: !!hide }); if (r.ok) { S.R = null; aRv(); } }
 const sw = (id, on) => `<button class="sw ${on ? "on" : ""}" id="${id}" onclick="this.classList.toggle('on')"></button>`;
 const isOn = id => $("#" + id).classList.contains("on");
 async function save(patch, secrets) { const r = await api("set", { patch, secrets }); if (r.ok) { toast("Сохранено ✅"); await loadAdmin(); await reInit(); rAdmin(); } }

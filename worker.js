@@ -175,7 +175,7 @@ export class Store {
   async openOrders() { return this.many(await this.open()); }
   async wake(ms = 1000) { const cur = await this.s.getAlarm(); const at = Date.now() + ms; if (!cur || cur > at) await this.s.setAlarm(at); }
   view(o, full) {
-    const v = { id: o.id, to: o.to, dest: o.dest || "", qty: o.qty, method: o.method, price: o.price, cur: CUR[o.method], status: o.status, statusText: STATUS[o.status], created: o.created, doneAt: o.doneAt, pay: o.pay, expires: o.expires };
+    const v = { id: o.id, rv: o.rv || 0, to: o.to, dest: o.dest || "", qty: o.qty, method: o.method, price: o.price, cur: CUR[o.method], status: o.status, statusText: STATUS[o.status], created: o.created, doneAt: o.doneAt, pay: o.pay, expires: o.expires };
     if (full) Object.assign(v, { uid: o.uid, uname: o.uname, err: o.err, by: o.by, ton: o.ton, tries: o.tries, paidAt: o.paidAt, shot: o.shot });
     return v;
   }
@@ -244,6 +244,14 @@ export class Store {
       return this.tg("sendMessage", { chat_id: m.chat.id, parse_mode: "HTML",
         text: `Твой ID: <code>${m.from.id}</code>\nЮзернейм: ${m.from.username ? "@" + esc(m.from.username) : "нет"}\nАдмин: ${this.isOwner(m.from) ? "✅ да" : "❌ нет — впиши ID в config.js → OWNERS"}` });
     }
+    if (m.text && !m.text.startsWith("/")) {
+      const pend = await this.s.get("rvp:" + m.from.id);
+      if (pend && Date.now() - pend.at < 24 * 3600e3) {
+        await this.s.delete("rvp:" + m.from.id);
+        const r = await this.review(m.from, pend.id, 0, m.text);
+        if (r.ok) return this.tg("sendMessage", { chat_id: m.chat.id, text: "💜 Отзыв опубликован, спасибо!", reply_markup: kb });
+      }
+    }
     if (m.photo || m.document) {
       const ids = (await this.s.get("u:" + m.from.id)) || [];
       let o = null;
@@ -264,8 +272,46 @@ export class Store {
     }
     return this.tg("sendMessage", { chat_id: m.chat.id, text: "Открой магазин кнопкой ниже 👇", reply_markup: kb });
   }
+  // ---------- отзывы (только настоящие: оставить может лишь покупатель выполненного заказа) ----------
+  async review(u, orderId, stars, text) {
+    const o = await this.getO(orderId);
+    if (!o || o.uid !== u.id) return { ok: false, err: "Это не твой заказ" };
+    if (o.status !== "done") return { ok: false, err: "Отзыв можно оставить после выдачи звёзд" };
+    const k = "rv:" + o.id, old = await this.s.get(k);
+    const rv = old || { id: o.id, uid: u.id, name: u.username || u.first_name || "", qty: o.qty, dest: o.dest || "", stars: 5, text: "", at: Date.now() };
+    if (stars) { if (!(stars >= 1 && stars <= 5)) return { ok: false, err: "Оценка 1–5" }; rv.stars = Math.round(stars); }
+    else if (!old) return { ok: false, err: "Сначала поставь оценку" };
+    if (typeof text === "string") rv.text = text.replace(/\s+/g, " ").trim().slice(0, 300);
+    rv.at = rv.at || Date.now(); await this.s.put(k, rv);
+    if (o.rv !== rv.stars) { o.rv = rv.stars; await this.putO(o); }
+    const list = (await this.s.get("reviews")) || [];
+    if (!list.includes(o.id)) { list.unshift(o.id); if (list.length > 500) list.length = 500; await this.s.put("reviews", list); }
+    const agg = (await this.s.get("rvAgg")) || { n: 0, sum: 0, clients: 0 };
+    if (!old) { agg.n++; agg.sum += rv.stars; if (!(await this.s.get("rvu:" + u.id))) { agg.clients++; await this.s.put("rvu:" + u.id, 1); } }
+    else if (stars) agg.sum += rv.stars - old.stars;
+    await this.s.put("rvAgg", agg);
+    if (!old || text) await this.notifyOwners(`💬 Отзыв к заказу #${o.id}: ${"⭐".repeat(rv.stars)}${rv.text ? "\n" + esc(rv.text) : ""}\nот ${esc(o.uname || String(o.uid))}`);
+    return { ok: true, review: rv };
+  }
+  async reviewsPublic(limit = 40) {
+    const agg = (await this.s.get("rvAgg")) || { n: 0, sum: 0, clients: 0 }, ids = ((await this.s.get("reviews")) || []).slice(0, limit * 2);
+    const m = ids.length ? await this.s.get(ids.map(i => "rv:" + i)) : new Map(), out = [];
+    const mask = n => { n = String(n || ""); return n.length <= 3 ? n.slice(0, 1) + "***" : n.slice(0, 2) + "***" + n.slice(-2); };
+    for (const i of ids) { const r = m.get("rv:" + i); if (r && !r.hidden) out.push({ id: r.id, stars: r.stars, text: r.text, qty: r.qty, dest: r.dest, at: r.at, name: mask(r.name) }); if (out.length >= limit) break; }
+    return { avg: agg.n ? Math.round(agg.sum / agg.n * 10) / 10 : 0, n: agg.n, clients: agg.clients, list: out };
+  }
   async onCallback(q) {
     const [kind, act, id] = String(q.data || "").split(":");
+    if (kind === "rv") {
+      const r = await this.review(q.from, Number(id), Number(act));
+      await this.tg("answerCallbackQuery", { callback_query_id: q.id, text: r.ok ? "Спасибо за оценку!" : r.err, show_alert: !r.ok });
+      if (r.ok && q.message) {
+        await this.tg("editMessageReplyMarkup", { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: [[{ text: "⭐".repeat(Number(act)) + " — спасибо!", callback_data: "noop" }]] } });
+        await this.s.put("rvp:" + q.from.id, { id: Number(id), at: Date.now() });
+        await this.tg("sendMessage", { chat_id: q.message.chat.id, text: "✍️ Напиши пару слов о покупке одним сообщением — добавим к отзыву. Или просто ничего не пиши 🙂" });
+      }
+      return;
+    }
     if (kind !== "ru") return;
     await this.seen(q.from);
     const st = await this.settings();
@@ -502,7 +548,8 @@ export class Store {
       const d = (await this.s.get("ruDebt")) || { orders: 0, stars: 0, rub: 0, ton: 0, since: Date.now() };
       d.orders++; d.stars += o.qty; d.rub += Number(o.price); d.ton += Number(inf.amount) / 1e9; await this.s.put("ruDebt", d);
     }
-    await this.tg("sendMessage", { chat_id: o.uid, text: `✅ Готово! ${o.qty} ⭐ отправлены на ${dst(o)}.\nСпасибо за покупку в ${NAME}!` });
+    await this.tg("sendMessage", { chat_id: o.uid, text: `✅ Готово! ${o.qty} ⭐ отправлены на ${dst(o)}.\nСпасибо за покупку в ${NAME}!\n\nОцени, пожалуйста, покупку — отзыв увидят другие покупатели:`,
+      reply_markup: { inline_keyboard: [[1, 2, 3, 4, 5].map(n => ({ text: n + "⭐", callback_data: `rv:${n}:${o.id}` }))] } });
   }
 
   // ---------- периодическая работа ----------
@@ -540,6 +587,8 @@ export class Store {
         shop: await (async () => { const R = await this.curRates(st); return { rates: R, auto: st.auto.on, case: this.caseOn() ? CONFIG.CASE.name : "", min: st.min, max: st.max, on: { mono: st.on.mono && R.uah > 0, cp: st.on.cp && R.usd > 0, ru: st.on.ru && R.rub > 0 }, ttl: st.ttl }; })(),
         orders: ids.map(i => m.get("o:" + i)).filter(Boolean).map(o => this.view(o)) };
     }
+    if (act === "reviews") return { ok: true, ...(await this.reviewsPublic()) };
+    if (act === "review") { const r = await this.review(u, Number(b.id), Number(b.stars) || 0, typeof b.text === "string" ? b.text : undefined); return r.ok ? { ok: true } : r; }
     if (act === "profile") {
       const us = (await this.s.get("us:" + u.id)) || { orders: 0, stars: 0, uah: 0, usd: 0, rub: 0, gifts: 0 };
       const ids = (await this.s.get("u:" + u.id)) || [], m = ids.length ? await this.s.get(ids.map(i => "o:" + i)) : new Map();
@@ -700,6 +749,17 @@ export class Store {
       await this.s.put("monoHook", 1); return { ok: true };
     }
     if (act === "cp_hook") return { ok: true, url: origin + "/cp" };
+    if (act === "review_hide") {
+      const r = await this.s.get("rv:" + Number(b.id)); if (!r) return { ok: false, err: "Нет отзыва" };
+      r.hidden = !!b.hide; await this.s.put("rv:" + r.id, r);
+      const agg = (await this.s.get("rvAgg")) || { n: 0, sum: 0, clients: 0 };
+      agg.n += b.hide ? -1 : 1; agg.sum += (b.hide ? -1 : 1) * r.stars; await this.s.put("rvAgg", agg);
+      return { ok: true };
+    }
+    if (act === "reviews_admin") {
+      const ids = ((await this.s.get("reviews")) || []).slice(0, 100), m = ids.length ? await this.s.get(ids.map(i => "rv:" + i)) : new Map();
+      return { ok: true, list: ids.map(i => m.get("rv:" + i)).filter(Boolean) };
+    }
     if (act === "order_act") {
       const o = await this.getO(Number(b.id)); if (!o) return { ok: false, err: "Заказ не найден" };
       const who = "@" + (u.username || u.id);
