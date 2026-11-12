@@ -336,12 +336,32 @@ export class Store {
       await this.s.put("monoLast", Date.now());
       const st = await this.settings(), since = (await this.s.get("monoSince")) || Date.now();
       const from = Math.floor(Math.max(Math.min(...orders.map(o => o.created)) - 180000, Date.now() - 6 * 3600e3) / 1000);
-      const items = await this.mono(`/personal/statement/${encodeURIComponent(st.mono.account || "0")}/${from}`);
-      for (const it of Array.isArray(items) ? items : []) {
+      // счёт выбираем сами по номеру карты (если в настройках «основной», а карта — другая: белая/чёрная/ФОП)
+      let acc = st.mono.account || "0";
+      if (acc === "0" && st.mono.card) {
+        let auto = await this.s.get("monoAccAuto");
+        const card = String(st.mono.card).replace(/\D/g, "");
+        if (!auto || auto.card !== card) {
+          const ci = await this.mono("/personal/client-info");
+          const a = (ci.accounts || []).find(a => (a.maskedPan || []).some(m => { const d = m.replace(/\D/g, ""); return d.length >= 10 && card.startsWith(d.slice(0, 6)) && card.endsWith(d.slice(-4)); }));
+          auto = { card, id: a ? a.id : "0", title: a ? (a.maskedPan || [])[0] + " (" + a.type + ")" : "карта не найдена среди счетов — проверяется основной" };
+          await this.s.put("monoAccAuto", auto);
+          await this.s.put("monoLast", Date.now()); await this.wake(61000); return;   // у банка лимит: 1 запрос в минуту
+        }
+        acc = auto.id || "0";
+      }
+      let items;
+      try { items = await this.mono(`/personal/statement/${encodeURIComponent(acc)}/${from}`); }
+      catch (e) { await this.s.put("monoStat", { at: Date.now(), err: "Монобанк: " + e.message }); throw e; }
+      let matched = 0, inc = 0;
+      const list = Array.isArray(items) ? items : [];
+      for (const it of list) { if (it.amount > 0) inc++; }
+      await this.s.put("monoStat", { at: Date.now(), acc, n: list.length, inc, last: list.filter(i => i.amount > 0).slice(0, 3).map(i => (i.amount / 100).toFixed(2)) });
+      for (const it of list) {
         if (!(it.amount > 0) || (it.currencyCode && it.currencyCode !== 980)) continue;
         const uk = "used:" + it.id; if (await this.s.get(uk)) continue;
         const o = orders.find(x => (x.status === "new" || x.status === "expired") && x.kop === it.amount && it.time * 1000 >= x.created - 120000);
-        if (o) { await this.s.put(uk, o.id); o.monoId = it.id; await this.markPaid(o, "Монобанк"); continue; }
+        if (o) { await this.s.put(uk, o.id); o.monoId = it.id; await this.markPaid(o, "Монобанк"); matched++; continue; }
         await this.s.put(uk, "-");
         if (st.notifyUnmatched && it.time * 1000 > since)
           await this.notifyOwners(`💸 На моно пришло ${(it.amount / 100).toFixed(2)} ₴ без подходящего заказа${it.description ? "\n" + esc(it.description) : ""}${it.comment ? "\n💬 " + esc(it.comment) : ""}\nЕсли это оплата — подтверди заказ вручную в админке.`);
@@ -493,6 +513,7 @@ export class Store {
     const sec = await this.sec();
     const monoW = orders.filter(o => o.method === "mono" && (o.status === "new" || o.status === "expired"));
     if (monoW.length && sec.monoToken) await this.monoCheck(monoW);
+    else if (monoW.length) await this.s.put("monoStat", { at: Date.now(), err: "Не задан токен Монобанка — оплаты не проверяются" });
     const cpW = orders.filter(o => o.method === "cp" && o.status === "new" && o.inv);
     if (cpW.length && sec.cpToken) {
       try { const r = await this.cp("getInvoices", { invoice_ids: cpW.map(o => o.inv).join(",") });
@@ -605,6 +626,7 @@ export class Store {
       const sec = await this.sec();
       return { ok: true, role: "owner", settings: st, origin,
         flags: { monoToken: !!sec.monoToken, cpToken: !!sec.cpToken, cookies: !!sec.cookies, mnemonic: !!this.env.WALLET_MNEMONIC, walletAddr: CONFIG.WALLET_ADDRESS || this.env.WALLET_ADDRESS || "", monoHook: !!(await this.s.get("monoHook")) },
+        monoStat: await this.s.get("monoStat"), monoAcc: await this.s.get("monoAccAuto"),
         fragLink: await (async () => { const f = await this.s.get("fraglogin"); return f && f.qtoken && Date.now() - f.at < 5 * 60e3 ? "https://t.me/oauth?startapp=" + f.qtoken : ""; })(),
         fx: await this.fx(), fxErr: this._fxErr || "", live: await this.curRates(st), starUsd: await this.s.get("starUsd"),
         wallet: await this.s.get("wallet"), stats: await this.s.get("stats"), debt: await this.s.get("ruDebt"),

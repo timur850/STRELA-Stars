@@ -392,7 +392,11 @@ function aPay() {
     <div class="tg">Писать мне о переводах без заказа ${sw("nunm", s.notifyUnmatched)}</div>
     <button class="btn sm" onclick="saveMono()">Сохранить</button>
     <div class="mut" style="margin:12px 0 8px;font-size:13px">Вебхук: ${f.monoHook ? '<span class="ok">подключён ✅</span>' : "не подключён — без него платёж находится до 1 минуты дольше"}</div>
-    <button class="btn ghost sm" onclick="monoHook()">Подключить вебхук</button></div>
+    <button class="btn ghost sm" onclick="monoHook()">Подключить вебхук</button>
+    <div class="mut" style="margin-top:12px;font-size:12.5px;line-height:1.55">${(() => { const m = S.A.monoStat, a = S.A.monoAcc;
+      if (!m) return "Проверка оплат ещё не запускалась (запустится, когда появится заказ на моно).";
+      if (m.err) return `<span class="bad">⚠️ ${esc(m.err)}</span> <span style="opacity:.7">(${dt(m.at)})</span>`;
+      return `Последняя проверка: <b>${dt(m.at)}</b> · счёт ${a && a.card ? esc(a.title) : m.acc === "0" ? "основной" : "выбранный"} · входящих за период: <b>${m.inc}</b>${m.last && m.last.length ? " (последние: " + m.last.join(" ₴, ") + " ₴)" : ""}`; })()}</div></div>
   <div class="card"><h2>💎 CryptoBot</h2>
     <div class="fl">Токен Crypto Pay ${f.cpToken ? '<span class="ok">— сохранён ✅</span>' : '<span class="bad">— не задан</span>'}</div>
     <input class="fi" id="ctok" placeholder="${f.cpToken ? "оставь пустым, чтобы не менять" : "123456:AA..."}" autocomplete="off">
