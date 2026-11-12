@@ -142,14 +142,14 @@ export class Store {
     const me = await this.tg("getMe", {}); const v = !!(me.ok && me.result.has_main_web_app);
     await this.s.put("mainapp", { t: Date.now(), v }); return v;
   }
-  caseOn() { return !!(CONFIG.CASE && CONFIG.CASE.url && String(this.env.CASE_KEY || "").trim().length >= 16); }
+  caseOn() { return !!(CONFIG.CASE && CONFIG.CASE.url); }
   // зачисление на баланс казино (идемпотентно: повтор того же заказа не зачислит дважды)
   async caseCredit(o) {
     const r = await fetch(CONFIG.CASE.url.replace(/\/$/, "") + "/ext/credit", { method: "POST",
-      headers: { "content-type": "application/json", "x-ext-key": String(this.env.CASE_KEY).trim() },
+      headers: { "content-type": "application/json", "x-ext-key": String(this.env.CASE_KEY || "").trim() },
       body: JSON.stringify({ id: "stars:" + o.id, uid: String(o.uid), name: o.uname || "", a: o.qty, from: NAME }) });
     const j = await r.json().catch(() => ({ ok: false, err: "казино ответило HTTP " + r.status }));
-    const mine = String(this.env.CASE_KEY).trim().length;
+    const mine = String(this.env.CASE_KEY || "").trim().length;
     if (!j.ok) throw new Error(j.err === "no key" ? "в казино (воркер strela) не задан секрет EXT_KEY или он короче 16 символов — добавь его и сделай Deploy"
       : j.err === "bad key" ? `ключ не совпадает: в STRELA STARS CASE_KEY из ${mine} символов${j.len ? `, в казино EXT_KEY из ${j.len}` : ""} — вставь в оба одинаковый` : (j.err || "ошибка казино"));
     return j;
@@ -199,6 +199,11 @@ export class Store {
         return new Response("ok");
       }
       if (p === "/cp") return this.onCryptoPay(req);
+      if (p === "/ext/verify") {   // казино проверяет заявку на зачисление: только оплаченные заказы «в казино»
+        const o = await this.getO(Number(url.searchParams.get("id")));
+        const ok = !!(o && o.dest === "case" && ["paid", "check", "done"].includes(o.status));
+        return new Response(JSON.stringify(ok ? { ok: true, uid: String(o.uid), qty: o.qty } : { ok: false }), { headers: { "content-type": "application/json" } });
+      }
       if (p === "/botname") return new Response(JSON.stringify({ bot: await this.botName(), case: this.caseOn(), app: await this.mainApp() }), { headers: { "content-type": "application/json", "access-control-allow-origin": "*" } });
       if (p.startsWith("/api/") && req.method === "POST") {
         const body = await req.json().catch(() => ({}));
