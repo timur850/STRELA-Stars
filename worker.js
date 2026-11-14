@@ -15,6 +15,7 @@ import * as F from "./fragment.js";
 const NAME = CONFIG.NAME || "STRELA STARS";
 const enc = new TextEncoder();
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+const what = o => o.kind === "premium" ? `👑 Premium на ${o.months} мес.` : `${o.qty} ⭐`;
 const dst = o => o.dest === "case" ? "баланс " + ((CONFIG.CASE && CONFIG.CASE.name) || "казино") : "@" + o.to;
 const low = s => String(s || "").replace(/^@/, "").trim().toLowerCase();
 const esc = s => String(s ?? "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
@@ -36,7 +37,8 @@ async function checkInitData(initData, token) {
 
 const DEF = {
   rates: { uah: 0, rub: 0, usd: 0 },         // цена 1 ★ в каждой валюте — ставится в админке (если автокурс выключен)
-  auto: { on: true, markup: 5, usdPerStar: 0.015 },   // автокурс: цена = себестоимость на Fragment по курсу TON + наценка %
+  auto: { on: true, markup: 5, usdPerStar: 0.015 },
+  premium: { on: true, usd: { 3: 11.99, 6: 15.99, 12: 28.99 } },   // себестоимость подарка Premium на Fragment в $ (уточняется после покупки)   // автокурс: цена = себестоимость на Fragment по курсу TON + наценка %
   min: 50, max: 10000,
   on: { mono: true, cp: true, ru: false },
   mono: { card: "", holder: "", account: "0" },
@@ -123,6 +125,15 @@ export class Store {
     this._fxErr = f.err; if (errs.length) console.log("fx", errs.join("; "));
     await this.s.put("fx", f); return (this._fx = f);
   }
+  // цены Premium (3/6/12 мес) в ₴ / $ / ₽: себестоимость на Fragment + наценка, по курсу доллара
+  async premRates(st) {
+    const f = await this.fx(), learned = (await this.s.get("premUsd")) || {}, out = {};
+    for (const m of [3, 6, 12]) {
+      const usd = (learned[m] || st.premium.usd[m]) * (1 + st.auto.markup / 100);
+      out[m] = f && f.fiat ? { usd: Math.ceil(usd * 100) / 100, uah: Math.ceil(usd * f.fiat.uah), rub: Math.ceil(usd * f.fiat.rub) } : { usd: 0, uah: 0, rub: 0 };
+    }
+    return out;
+  }
   // цена 1 ★ в ₴ / $ / ₽ с учётом автокурса
   async curRates(st) {
     if (!st.auto.on) return st.rates;
@@ -177,7 +188,7 @@ export class Store {
   async openOrders() { return this.many(await this.open()); }
   async wake(ms = 1000) { const cur = await this.s.getAlarm(); const at = Date.now() + ms; if (!cur || cur > at) await this.s.setAlarm(at); }
   view(o, full) {
-    const v = { id: o.id, rv: o.rv || 0, to: o.to, dest: o.dest || "", qty: o.qty, method: o.method, price: o.price, cur: CUR[o.method], status: o.status, statusText: STATUS[o.status], created: o.created, doneAt: o.doneAt, pay: o.pay, expires: o.expires };
+    const v = { id: o.id, rv: o.rv || 0, to: o.to, dest: o.dest || "", kind: o.kind || "", months: o.months || 0, qty: o.qty, method: o.method, price: o.price, cur: CUR[o.method], status: o.status, statusText: STATUS[o.status], created: o.created, doneAt: o.doneAt, pay: o.pay, expires: o.expires };
     if (full) Object.assign(v, { uid: o.uid, uname: o.uname, err: o.err, by: o.by, ton: o.ton, tries: o.tries, paidAt: o.paidAt, shot: o.shot });
     return v;
   }
@@ -266,7 +277,7 @@ export class Store {
       if (!o) return this.tg("sendMessage", { chat_id: m.chat.id, text: "Нет заказа с оплатой картой РФ, который ждёт подтверждения. Создай заказ в магазине 👇", reply_markup: kb });
       const st = await this.settings();
       const chk = await this.idsOf(st.ru.checkers.length ? st.ru.checkers : CONFIG.OWNERS);
-      const cap = `🧾 Заказ #${o.id} — карта РФ\n${o.qty} ⭐ → ${dst(o)}\nСумма: ${o.price} ₽\nОт: ${o.uname || o.uid} (id ${o.uid})`;
+      const cap = `🧾 Заказ #${o.id} — карта РФ\n${what(o)} → ${dst(o)}\nСумма: ${o.price} ₽\nОт: ${o.uname || o.uid} (id ${o.uid})`;
       const rm = { inline_keyboard: [[{ text: "✅ Подтвердить", callback_data: "ru:ok:" + o.id }, { text: "❌ Отклонить", callback_data: "ru:no:" + o.id }]] };
       let sent = 0;
       for (const id of chk) {
@@ -285,7 +296,7 @@ export class Store {
     if (!o || o.uid !== u.id) return { ok: false, err: "Это не твой заказ" };
     if (o.status !== "done") return { ok: false, err: "Отзыв можно оставить после выдачи звёзд" };
     const k = "rv:" + o.id, old = await this.s.get(k);
-    const rv = old || { id: o.id, uid: u.id, name: u.username || u.first_name || "", qty: o.qty, dest: o.dest || "", stars: 5, text: "", at: Date.now() };
+    const rv = old || { id: o.id, uid: u.id, name: u.username || u.first_name || "", qty: o.qty, kind: o.kind || "", months: o.months || 0, dest: o.dest || "", stars: 5, text: "", at: Date.now() };
     if (stars) { if (!(stars >= 1 && stars <= 5)) return { ok: false, err: "Оценка 1–5" }; rv.stars = Math.round(stars); }
     else if (!old) return { ok: false, err: "Сначала поставь оценку" };
     if (typeof text === "string") rv.text = text.replace(/\s+/g, " ").trim().slice(0, 300);
@@ -304,7 +315,7 @@ export class Store {
     const agg = (await this.s.get("rvAgg")) || { n: 0, sum: 0, clients: 0 }, ids = ((await this.s.get("reviews")) || []).slice(0, limit * 2);
     const m = ids.length ? await this.s.get(ids.map(i => "rv:" + i)) : new Map(), out = [];
     const mask = n => { n = String(n || ""); return n.length <= 3 ? n.slice(0, 1) + "***" : n.slice(0, 2) + "***" + n.slice(-2); };
-    for (const i of ids) { const r = m.get("rv:" + i); if (r && !r.hidden) out.push({ id: r.id, stars: r.stars, text: r.text, qty: r.qty, dest: r.dest, at: r.at, name: mask(r.name) }); if (out.length >= limit) break; }
+    for (const i of ids) { const r = m.get("rv:" + i); if (r && !r.hidden) out.push({ id: r.id, stars: r.stars, text: r.text, qty: r.qty, kind: r.kind || "", months: r.months || 0, dest: r.dest, at: r.at, name: mask(r.name) }); if (out.length >= limit) break; }
     return { avg: agg.n ? Math.round(agg.sum / agg.n * 10) / 10 : 0, n: agg.n, clients: agg.clients, list: out };
   }
   async onCallback(q) {
@@ -346,7 +357,7 @@ export class Store {
     if (o.status !== "new" && o.status !== "expired") return;
     o.status = "paid"; o.paidAt = Date.now(); o.by = by; o.tries = 0; await this.putO(o);
     const ids = await this.open(); if (!ids.includes(o.id)) { ids.push(o.id); await this.setOpen(ids); }
-    await this.tg("sendMessage", { chat_id: o.uid, text: `💳 Оплата заказа #${o.id} получена. Отправляем ${o.qty} ⭐ на ${dst(o)}…` });
+    await this.tg("sendMessage", { chat_id: o.uid, text: `💳 Оплата заказа #${o.id} получена. Отправляем ${what(o)} на ${dst(o)}…` });
     await this.wake(500);
   }
   async cp(method, params) {
@@ -476,7 +487,7 @@ export class Store {
       for (const o of (await this.openOrders()).filter(o => o.status === "paid" && o.dest === "case")) {
         try { await this.caseCredit(o); await this.finish(o, { amount: 0 }); }
         catch (e) { o.tries = (o.tries || 0) + 1; o.err = "казино: " + e.message;
-          if (o.tries >= 5) { o.status = "check"; await this.closeO(o); await this.notifyOwners(`⚠️ Заказ #${o.id} (${o.qty} ⭐ → ${dst(o)}) не зачислился: ${esc(e.message)}`); }
+          if (o.tries >= 5) { o.status = "check"; await this.closeO(o); await this.notifyOwners(`⚠️ Заказ #${o.id} (${what(o)} → ${dst(o)}) не зачислился: ${esc(e.message)}`); }
           await this.putO(o); await this.wake(30000); }
       }
       const inf = await this.s.get("inflight");
@@ -496,7 +507,7 @@ export class Store {
           await this.s.delete("inflight");
           o.tries = (o.tries || 0) + 1; o.err = "транзакция не прошла";
           o.status = o.tries >= 3 ? "check" : "paid"; await this.putO(o);
-          if (o.status === "check") { await this.closeO(o); await this.notifyOwners(`⚠️ Заказ #${o.id} (${o.qty} ⭐ → ${dst(o)}) не удалось отправить 3 раза. Проверь кошелёк и нажми «Повторить» в админке.`); }
+          if (o.status === "check") { await this.closeO(o); await this.notifyOwners(`⚠️ Заказ #${o.id} (${what(o)} → ${dst(o)}) не удалось отправить 3 раза. Проверь кошелёк и нажми «Повторить» в админке.`); }
         } else { await this.wake(10000); return; }
       }
       const paid = (await this.openOrders()).filter(o => o.status === "paid" && o.dest !== "case").sort((a, b) => a.paidAt - b.paidAt);
@@ -510,16 +521,16 @@ export class Store {
       if (!w.ok) return stop("кошелёк: " + w.err);
       if (!sec.cookies) return stop("не вставлены куки Fragment");
       let q; const frag = new Fragment(sec.cookies);
-      try { q = await frag.buy(o.to, o.qty, w); }
+      try { q = o.kind === "premium" ? await frag.buy(o.to, o.months, w, "premium") : await frag.buy(o.to, o.qty, w); }
       catch (e) {
         if (frag.changed) { sec.cookies = frag.cookies; await this.s.put("sec", sec); }
         if (/access denied|unauthorized|session|not logged/i.test(e.message)) return stop(e.message + " — вход в Fragment слетел или не завершён: Админ → 💎 Кошелёк → «Войти в Fragment через Telegram»");
         if (/куки|не открылся|KYC|verify|login|auth/i.test(e.message)) return stop(e.message);
         o.tries = (o.tries || 0) + 1; o.err = e.message;
-        if (o.tries >= 3 || /нет такого пользователя/.test(e.message)) { o.status = "check"; await this.closeO(o); await this.notifyOwners(`⚠️ Заказ #${o.id} (${o.qty} ⭐ → @${esc(o.to)}): ${esc(e.message)}`); }
+        if (o.tries >= 3 || /нет такого пользователя/.test(e.message)) { o.status = "check"; await this.closeO(o); await this.notifyOwners(`⚠️ Заказ #${o.id} (${what(o)} → @${esc(o.to)}): ${esc(e.message)}`); }
         await this.putO(o); await this.wake(20000); return;
       }
-      if (Number(q.amount) / 1e9 / o.qty > st.maxTonPerStar) {
+      if (o.kind === "premium" ? await (async () => { const f = await this.fx(); return f && f.tonUsd && Number(q.amount) / 1e9 * f.tonUsd > st.premium.usd[o.months] * 1.6; })() : Number(q.amount) / 1e9 / o.qty > st.maxTonPerStar) {
         o.status = "check"; o.err = `Fragment просит ${(Number(q.amount) / 1e9).toFixed(4)} TON — дороже лимита ${st.maxTonPerStar} TON за ★`;
         await this.putO(o); await this.closeO(o); await this.notifyOwners(`⚠️ Заказ #${o.id}: ${o.err}`); return;
       }
@@ -543,6 +554,7 @@ export class Store {
     o.status = "done"; o.doneAt = Date.now(); o.ton = inf.amount; o.err = ""; await this.putO(o); await this.closeO(o);
     const s = (await this.s.get("stats")) || { orders: 0, stars: 0, uah: 0, usd: 0, rub: 0, ton: 0 };
     s.orders++; s.stars += o.qty; s.ton += Number(inf.amount) / 1e9;
+    if (o.kind === "premium") try { const f = await this.fx(); if (f && f.tonUsd && inf.amount) { const v = Number(inf.amount) / 1e9 * f.tonUsd, pu = (await this.s.get("premUsd")) || {}; if (v > 3 && v < 80) { pu[o.months] = Math.round(v * 100) / 100; await this.s.put("premUsd", pu); } } } catch {}
     try { const f = await this.fx(); if (f && f.tonUsd && o.qty) { const v = Number(inf.amount) / 1e9 * f.tonUsd / o.qty; if (v > 0.005 && v < 0.05) await this.s.put("starUsd", v); } } catch {}   // реальная цена звезды на Fragment
     s[{ mono: "uah", cp: "usd", ru: "rub" }[o.method]] += Number(o.price);
     await this.s.put("stats", s);
@@ -555,7 +567,7 @@ export class Store {
       const d = (await this.s.get("ruDebt")) || { orders: 0, stars: 0, rub: 0, ton: 0, since: Date.now() };
       d.orders++; d.stars += o.qty; d.rub += Number(o.price); d.ton += Number(inf.amount) / 1e9; await this.s.put("ruDebt", d);
     }
-    await this.tg("sendMessage", { chat_id: o.uid, text: `✅ Готово! ${o.qty} ⭐ отправлены на ${dst(o)}.\nСпасибо за покупку в ${NAME}!\n\nОцени, пожалуйста, покупку — отзыв увидят другие покупатели:`,
+    await this.tg("sendMessage", { chat_id: o.uid, text: `✅ Готово! ${what(o)} отправлены на ${dst(o)}.\nСпасибо за покупку в ${NAME}!\n\nОцени, пожалуйста, покупку — отзыв увидят другие покупатели:`,
       reply_markup: { inline_keyboard: [[1, 2, 3, 4, 5].map(n => ({ text: n + "⭐", callback_data: `rv:${n}:${o.id}` }))] } });
   }
 
@@ -591,7 +603,7 @@ export class Store {
       const m = ids.length ? await this.s.get(ids.map(i => "o:" + i)) : new Map();
       return { ok: true, name: NAME, support: CONFIG.SUPPORT, bot: await this.botName(), role: owner ? "owner" : checker ? "checker" : "",
         me: { id: u.id, username: u.username || "", first: u.first_name || "" },
-        shop: await (async () => { const R = await this.curRates(st); return { rates: R, auto: st.auto.on, case: this.caseOn() ? CONFIG.CASE.name : "", min: st.min, max: st.max, on: { mono: st.on.mono && R.uah > 0, cp: st.on.cp && R.usd > 0, ru: st.on.ru && R.rub > 0 }, ttl: st.ttl }; })(),
+        shop: await (async () => { const R = await this.curRates(st); return { rates: R, auto: st.auto.on, case: this.caseOn() ? CONFIG.CASE.name : "", premium: st.premium.on ? await this.premRates(st) : null, min: st.min, max: st.max, on: { mono: st.on.mono && R.uah > 0, cp: st.on.cp && R.usd > 0, ru: st.on.ru && R.rub > 0 }, ttl: st.ttl }; })(),
         orders: ids.map(i => m.get("o:" + i)).filter(Boolean).map(o => this.view(o)) };
     }
     if (act === "reviews") return { ok: true, ...(await this.reviewsPublic()) };
@@ -604,7 +616,7 @@ export class Store {
     }
     if (act === "rates") {   // мини-апп обновляет цену каждые 15 секунд
       const R = await this.curRates(st);
-      return { ok: true, rates: R, on: { mono: st.on.mono && R.uah > 0, cp: st.on.cp && R.usd > 0, ru: st.on.ru && R.rub > 0 } };
+      return { ok: true, rates: R, premium: st.premium.on ? await this.premRates(st) : null, on: { mono: st.on.mono && R.uah > 0, cp: st.on.cp && R.usd > 0, ru: st.on.ru && R.rub > 0 } };
     }
     if (act === "recipient") {
       const to = low(b.to); if (!/^[a-z0-9_]{4,32}$/.test(to)) return { ok: false, err: "Неверный юзернейм" };
@@ -627,36 +639,40 @@ export class Store {
     return this.admin(act, u, b, st, owner);
   }
   async create(u, b, st) {
-    const toCase = b.dest === "case", qty = Math.floor(Number(b.qty)), method = String(b.method || "");
+    const prem = b.kind === "premium", months = Math.floor(Number(b.months));
+    if (prem && !(st.premium.on && [3, 6, 12].includes(months))) return { ok: false, err: "Premium: выбери 3, 6 или 12 месяцев" };
+    const toCase = !prem && b.dest === "case", qty = prem ? 0 : Math.floor(Number(b.qty)), method = String(b.method || "");
     if (toCase && !this.caseOn()) return { ok: false, err: "Пополнение казино сейчас выключено" };
     const to = toCase ? low(CONFIG.CASE.name).replace(/[^a-z0-9_]/g, "_") : low(b.to);
     if (!toCase && !/^[a-z0-9_]{4,32}$/.test(to)) return { ok: false, err: "Укажи юзернейм получателя" };
-    if (!(qty >= st.min && qty <= st.max)) return { ok: false, err: `Количество: от ${st.min} до ${st.max} ⭐` };
-    const R = await this.curRates(st), rate = { mono: R.uah, cp: R.usd, ru: R.rub }[method];
-    if (!st.on[method] || !(rate > 0)) return { ok: false, err: "Этот способ оплаты сейчас выключен" };
+    if (!prem && !(qty >= st.min && qty <= st.max)) return { ok: false, err: `Количество: от ${st.min} до ${st.max} ⭐` };
+    const cur = { mono: "uah", cp: "usd", ru: "rub" }[method];
+    const R = await this.curRates(st), rate = R[cur];
+    const total = prem ? (await this.premRates(st))[months][cur] : qty * rate;   // итоговая сумма заказа
+    if (!st.on[method] || !(rate > 0) || !(total > 0)) return { ok: false, err: "Этот способ оплаты сейчас выключен" };
     const recent = ((await this.s.get("u:" + u.id)) || []).slice(-5), rm = recent.length ? await this.s.get(recent.map(i => "o:" + i)) : new Map();
     if ([...rm.values()].filter(o => o && o.status === "new").length >= 3) return { ok: false, err: "У тебя уже 3 неоплаченных заказа — оплати или отмени их" };
     const id = ((await this.s.get("seq")) || 1000) + 1; await this.s.put("seq", id);
     const now = Date.now();
-    const o = { id, uid: u.id, uname: u.username ? "@" + u.username : (u.first_name || ""), to, ...(toCase ? { dest: "case" } : {}), qty, method, status: "new", created: now, expires: now + st.ttl * 60000 * (method === "ru" ? 4 : 1) };
+    const o = { id, uid: u.id, uname: u.username ? "@" + u.username : (u.first_name || ""), to, ...(toCase ? { dest: "case" } : {}), ...(prem ? { kind: "premium", months } : {}), qty, method, status: "new", created: now, expires: now + st.ttl * 60000 * (method === "ru" ? 4 : 1) };
     if (method === "mono") {
       if (!st.mono.card) return { ok: false, err: "Оплата Монобанком ещё не настроена" };
-      const base = Math.ceil(qty * rate) * 100;
+      const base = Math.ceil(total) * 100;
       const taken = new Set((await this.openOrders()).filter(x => x.method === "mono" && (x.status === "new" || x.status === "expired")).map(x => x.kop));
       let kop = 0; const start = 1 + Math.floor(Math.random() * 98);
       for (let i = 0; i < 99 && !kop; i++) { const k = base + 1 + ((start + i) % 99); if (!taken.has(k)) kop = k; }
       if (!kop) return { ok: false, err: "Слишком много заказов на эту сумму, попробуй другое количество" };
       o.kop = kop; o.price = (kop / 100).toFixed(2); o.pay = { card: st.mono.card, holder: st.mono.holder };
     } else if (method === "cp") {
-      o.price = (Math.ceil(qty * rate * 100) / 100).toFixed(2);
+      o.price = (Math.ceil(total * 100) / 100).toFixed(2);
       const bot = await this.botName();
       const inv = await this.cp("createInvoice", { currency_type: "fiat", fiat: "USD", amount: o.price, accepted_assets: "USDT,TON",
-        description: `${qty} ⭐ для @${to} — ${NAME}`, payload: String(id), expires_in: st.ttl * 60, allow_comments: false,
+        description: `${prem ? "Telegram Premium на " + months + " мес." : qty + " ⭐"} для @${to} — ${NAME}`, payload: String(id), expires_in: st.ttl * 60, allow_comments: false,
         ...(bot ? { paid_btn_name: "openBot", paid_btn_url: "https://t.me/" + bot } : {}) });
       o.inv = inv.invoice_id; o.pay = { url: inv.mini_app_invoice_url || inv.bot_invoice_url };
     } else if (method === "ru") {
       if (!st.ru.details) return { ok: false, err: "Реквизиты карты РФ ещё не заданы" };
-      o.price = String(Math.ceil(qty * rate)); o.pay = { details: st.ru.details };
+      o.price = String(Math.ceil(total)); o.pay = { details: st.ru.details };
     }
     await this.putO(o);
     const ids = await this.open(); ids.push(id); await this.setOpen(ids);
@@ -665,7 +681,7 @@ export class Store {
     if (method === "mono") await this.wake(62000);
     if (method === "ru") {
       const chk = await this.idsOf(st.ru.checkers.length ? st.ru.checkers : CONFIG.OWNERS);
-      for (const c of chk) await this.tg("sendMessage", { chat_id: c, text: `🆕 Заказ #${id} — карта РФ: ${qty} ⭐ → @${to}, ${o.price} ₽. Жду скрин от покупателя.` });
+      for (const c of chk) await this.tg("sendMessage", { chat_id: c, text: `🆕 Заказ #${id} — карта РФ: ${what(o)} → @${to}, ${o.price} ₽. Жду скрин от покупателя.` });
     }
     return { ok: true, order: this.view(o) };
   }
@@ -688,6 +704,7 @@ export class Store {
         flags: { monoToken: !!sec.monoToken, cpToken: !!sec.cpToken, cookies: !!sec.cookies, mnemonic: !!this.env.WALLET_MNEMONIC, walletAddr: CONFIG.WALLET_ADDRESS || this.env.WALLET_ADDRESS || "", monoHook: !!(await this.s.get("monoHook")) },
         monoStat: await this.s.get("monoStat"), monoAcc: await this.s.get("monoAccAuto"),
         fragLink: await (async () => { const f = await this.s.get("fraglogin"); return f && f.qtoken && Date.now() - f.at < 5 * 60e3 ? "https://t.me/oauth?startapp=" + f.qtoken : ""; })(),
+        prem: await this.premRates(st), premUsd: await this.s.get("premUsd"),
         fx: await this.fx(), fxErr: this._fxErr || "", live: await this.curRates(st), starUsd: await this.s.get("starUsd"),
         wallet: await this.s.get("wallet"), stats: await this.s.get("stats"), debt: await this.s.get("ruDebt"),
         queue: (await this.openOrders()).filter(o => o.status === "paid" || o.status === "sending").length,
@@ -696,6 +713,8 @@ export class Store {
     if (act === "set") {
       const p = b.patch || {};
       if (p.rates) for (const k of ["uah", "rub", "usd"]) if (p.rates[k] !== undefined) st.rates[k] = Math.max(0, Number(p.rates[k]) || 0);
+      if (p.premium) { if (p.premium.on !== undefined) st.premium.on = !!p.premium.on;
+        for (const m of [3, 6, 12]) if (p.premium.usd && +p.premium.usd[m] > 0) st.premium.usd[m] = Math.min(100, +p.premium.usd[m]); }
       if (p.auto) { if (p.auto.on !== undefined) st.auto.on = !!p.auto.on;
         if (p.auto.markup !== undefined) st.auto.markup = Math.min(500, Math.max(0, Number(p.auto.markup) || 0));
         if (p.auto.usdPerStar !== undefined) st.auto.usdPerStar = Math.min(0.05, Math.max(0.005, Number(p.auto.usdPerStar) || DEF.auto.usdPerStar)); }
@@ -779,7 +798,7 @@ export class Store {
       } else if (b.act === "done") {
         if (!["check", "paid"].includes(o.status)) return { ok: false, err: "Нельзя" };
         o.status = "done"; o.doneAt = Date.now(); o.by = (o.by || "") + ", выдан вручную " + who; await this.putO(o); await this.closeO(o);
-        await this.tg("sendMessage", { chat_id: o.uid, text: `✅ Заказ #${o.id} выполнен: ${o.qty} ⭐ на ${dst(o)}.` });
+        await this.tg("sendMessage", { chat_id: o.uid, text: `✅ Заказ #${o.id} выполнен: ${what(o)} на ${dst(o)}.` });
       } else if (b.act === "cancel") {
         if (["done", "sending"].includes(o.status)) return { ok: false, err: "Нельзя" };
         o.status = "canceled"; await this.putO(o); await this.closeO(o);

@@ -40,25 +40,29 @@ export class Fragment {
     if (!j.found || !j.found.recipient) throw new Error("на Fragment нет такого пользователя");
     return { recipient: j.found.recipient, name: String(j.found.name || "").replace(/<[^>]+>/g, "") };
   }
-  // → { to, amount (нанотоны), payload Cell, reqId, confirm }
-  async buy(username, qty, wallet) {
-    await this.api({ mode: "new", lv: "false", dh: String(Date.now()) + "000000", method: "updateStarsBuyState" });
-    const { recipient } = await this.recipient(username, qty);
-    const init = await this.api({ recipient, quantity: String(qty), payment_method: "ton", method: "initBuyStarsRequest" });
+  // → { to, amount (нанотоны), payload Cell, reqId, confirm }. kind: "stars" (n = кол-во звёзд) или "premium" (n = месяцев)
+  async buy(username, n, wallet, kind = "stars") {
+    const P = kind === "premium"
+      ? { page: "https://fragment.com/premium/gift", state: "updatePremiumState", search: "searchPremiumGiftRecipient", init: "initGiftPremiumRequest", link: "getGiftPremiumLink", s: { months: String(n) }, i: { months: String(n) } }
+      : { page: "https://fragment.com/stars/buy", state: "updateStarsBuyState", search: "searchStarsRecipient", init: "initBuyStarsRequest", link: "getBuyStarsLink", s: { quantity: "" }, i: { quantity: String(n) } };
+    await this.api({ mode: "new", lv: "false", dh: String(Date.now()) + "000000", method: P.state }, P.page);
+    const f = await this.api({ query: String(username).replace(/^@/, ""), ...P.s, method: P.search }, P.page);
+    if (!f.found || !f.found.recipient) throw new Error("на Fragment нет такого пользователя" + (kind === "premium" && f.error ? " (" + f.error + ")" : ""));
+    const init = await this.api({ recipient: f.found.recipient, ...P.i, payment_method: "ton", method: P.init }, P.page);
     if (!init.req_id) throw new Error("Fragment не создал заявку");
     const account = JSON.stringify({ address: wallet.raw, chain: "-239", walletStateInit: wallet.stateInit, publicKey: wallet.pub });
-    const link = await this.api({ transaction: "1", id: init.req_id, show_sender: "0", method: "getBuyStarsLink", account, device: JSON.stringify(DEVICE) });
+    const link = await this.api({ transaction: "1", id: init.req_id, show_sender: "0", method: P.link, account, device: JSON.stringify(DEVICE) }, P.page);
     const tx = link.transaction, m = tx && tx.messages && tx.messages[0];
     if (!m) throw new Error("Fragment не выдал транзакцию" + (link.need_verify ? " — нужно пройти KYC" : ""));
     if (tx.messages.length !== 1) throw new Error("Fragment вернул " + tx.messages.length + " сообщения — не отправляю");
     let payload = null;
     if (m.payload) { try { payload = parseBoc(m.payload); } catch { payload = commentCell(String(m.payload)); } }
     return { to: m.address, amount: BigInt(m.amount), payload, reqId: init.req_id,
-      confirm: { method: String(link.confirm_method || tx.confirm_method || "confirmReq"), params: link.confirm_params || tx.confirm_params || { id: init.req_id }, account } };
+      confirm: { method: String(link.confirm_method || tx.confirm_method || "confirmReq"), params: link.confirm_params || tx.confirm_params || { id: init.req_id }, account, page: P.page } };
   }
   // сообщаем Fragment подписанную транзакцию (как это делает сайт после оплаты из кошелька)
   async confirm(c, boc) {
-    return this.api({ ...c.params, method: c.method, account: c.account, device: JSON.stringify(DEVICE), boc });
+    return this.api({ ...c.params, method: c.method, account: c.account, device: JSON.stringify(DEVICE), boc }, c.page);
   }
 }
 
