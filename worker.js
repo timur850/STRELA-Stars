@@ -580,8 +580,15 @@ export class Store {
     if ((o.codeTries || 0) >= 60) return { ok: false, err: "Слишком много попыток — напиши в поддержку " + CONFIG.SUPPORT };
     if (Date.now() - (o.codeAt || 0) < 4000) return { ok: true, code: "", wait: true };
     o.codeAt = Date.now(); o.codeTries = (o.codeTries || 0) + 1; await this.putO(o);
-    try { return { ok: true, code: pickCode(await this.lzt(`/${o.num.item}/telegram-login-code`)) }; }
+    let code = "";
+    try { code = pickCode(await this.lzt(`/${o.num.item}/telegram-login-code`)); }
     catch (e) { return { ok: false, err: e.message }; }
+    if (code && !o.rvAsked) {   // код пришёл — покупка состоялась, просим оценку (один раз)
+      o.rvAsked = true; await this.putO(o);
+      await this.tg("sendMessage", { chat_id: o.uid, text: `✅ Рады, что всё получилось! Оцени, пожалуйста, покупку в ${NAME} — отзыв увидят другие покупатели:`,
+        reply_markup: { inline_keyboard: [[1, 2, 3, 4, 5].map(n => ({ text: n + "⭐", callback_data: `rv:${n}:${o.id}` }))] } });
+    }
+    return { ok: true, code };
   }
 
   // ---------- кошелёк и выдача ----------
