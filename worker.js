@@ -10,13 +10,14 @@ import { CONFIG } from "./config.js";
 import HTML from "./index.html";
 import * as T from "./ton.js";
 import { Fragment } from "./fragment.js";
+import { COUNTRIES } from "./countries.js";
 import * as F from "./fragment.js";
 
 const NAME = CONFIG.NAME || "STRELA STARS";
 const enc = new TextEncoder();
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
-const what = o => o.kind === "premium" ? `👑 Premium на ${o.months} мес.` : `${o.qty} ⭐`;
-const dst = o => o.dest === "case" ? "баланс " + ((CONFIG.CASE && CONFIG.CASE.name) || "казино") : "@" + o.to;
+const what = o => o.kind === "premium" ? `👑 Premium на ${o.months} мес.` : o.kind === "number" ? `📱 Номер (${(COUNTRIES[o.cc] || [o.cc])[0]})` : `${o.qty} ⭐`;
+const dst = o => o.kind === "number" ? "Telegram" : o.dest === "case" ? "баланс " + ((CONFIG.CASE && CONFIG.CASE.name) || "казино") : "@" + o.to;
 const low = s => String(s || "").replace(/^@/, "").trim().toLowerCase();
 const esc = s => String(s ?? "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
 const sha = async s => T.hex(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(s))));
@@ -46,10 +47,40 @@ const DEF = {
   maxTonPerStar: 0.02,                        // защита: дороже этого за 1 ★ бот не купит
   ttl: 30,                                    // минут на оплату
   notifyUnmatched: true,
+  num: { on: false, markup: 30, cur: "rub", countries: ["BR", "US", "EG", "BD", "MM", "UZ", "ID", "IN", "CO", "CA", "CL", "GB", "KE", "UA", "RU", "KZ", "PL"] },   // номера с LZT Market
 };
+
+// номер телефона из ответа LZT (формат ответа у разных категорий немного отличается — смотрим во всех типичных местах)
+function pickPhone(j) {
+  const it = (j && j.item) || {}, ld = it.loginData || (j && j.loginData) || {};
+  for (const v of [ld.login, it.login, j && j.login, it.telegram_phone, it.phone, j && j.telegram_phone, ld.raw]) {
+    const d = String(v ?? "").replace(/[\s()+-]/g, "");
+    if (/^\d{7,15}$/.test(d)) return "+" + d;
+  }
+  return "";
+}
+// код входа из ответа LZT: ищем 4–8 цифр в полях со словом code; если их несколько — берём самый свежий
+function pickCode(j) {
+  const found = [];
+  const walk = (x, d) => {
+    if (d > 4 || x == null) return;
+    if (Array.isArray(x)) return x.forEach(v => walk(v, d + 1));
+    if (typeof x !== "object") return;
+    for (const [k, v] of Object.entries(x)) {
+      if (/code/i.test(k) && (typeof v === "string" || typeof v === "number") && /^\d{4,8}$/.test(String(v)))
+        found.push({ code: String(v), at: Date.parse(x.date || x.created_at || "") || 0 });
+      else walk(v, d + 1);
+    }
+  };
+  walk(j, 0);
+  found.sort((a, b) => b.at - a.at);
+  return found[0] ? found[0].code : "";
+}
+
 let HTML_TAG = "";
 const METHOD = { mono: "Монобанк", cp: "CryptoBot", ru: "Карта РФ" };
 const CUR = { mono: "₴", cp: "$", ru: "₽" };
+const NUMCUR = { rub: "₽", uah: "₴", usd: "$" };
 const STATUS = { new: "ждёт оплаты", paid: "оплачен, в очереди", sending: "отправляется", done: "выполнен", check: "нужна проверка", expired: "время вышло", canceled: "отменён", rejected: "отклонён" };
 const merge = (a, b) => { for (const k of Object.keys(b || {})) a[k] = b[k] && typeof b[k] === "object" && !Array.isArray(b[k]) ? merge(Object.assign({}, a[k]), b[k]) : b[k]; return a; };
 
@@ -188,7 +219,8 @@ export class Store {
   async openOrders() { return this.many(await this.open()); }
   async wake(ms = 1000) { const cur = await this.s.getAlarm(); const at = Date.now() + ms; if (!cur || cur > at) await this.s.setAlarm(at); }
   view(o, full) {
-    const v = { id: o.id, rv: o.rv || 0, to: o.to, dest: o.dest || "", kind: o.kind || "", months: o.months || 0, qty: o.qty, method: o.method, price: o.price, cur: CUR[o.method], status: o.status, statusText: STATUS[o.status], created: o.created, doneAt: o.doneAt, pay: o.pay, expires: o.expires };
+    const v = { id: o.id, rv: o.rv || 0, to: o.to, dest: o.dest || "", kind: o.kind || "", months: o.months || 0, qty: o.qty, method: o.method, price: o.price, cur: CUR[o.method], status: o.status, statusText: STATUS[o.status], created: o.created, doneAt: o.doneAt, pay: o.pay, expires: o.expires,
+      cc: o.cc || "", cname: o.cc ? (COUNTRIES[o.cc] || [""])[0] : "", phone: o.kind === "number" && o.status === "done" && o.num ? o.num.phone : "" };
     if (full) Object.assign(v, { uid: o.uid, uname: o.uname, err: o.err, by: o.by, ton: o.ton, tries: o.tries, paidAt: o.paidAt, shot: o.shot });
     return v;
   }
@@ -357,7 +389,7 @@ export class Store {
     if (o.status !== "new" && o.status !== "expired") return;
     o.status = "paid"; o.paidAt = Date.now(); o.by = by; o.tries = 0; await this.putO(o);
     const ids = await this.open(); if (!ids.includes(o.id)) { ids.push(o.id); await this.setOpen(ids); }
-    await this.tg("sendMessage", { chat_id: o.uid, text: `💳 Оплата заказа #${o.id} получена. Отправляем ${what(o)} на ${dst(o)}…` });
+    await this.tg("sendMessage", { chat_id: o.uid, text: o.kind === "number" ? `💳 Оплата заказа #${o.id} получена. Подбираем номер…` : `💳 Оплата заказа #${o.id} получена. Отправляем ${what(o)} на ${dst(o)}…` });
     await this.wake(500);
   }
   async cp(method, params) {
@@ -434,6 +466,124 @@ export class Store {
     finally { this.mbusy = false; }
   }
 
+  // ---------- номера (LZT Market) ----------
+  async lzt(path, opt = {}) {
+    const token = (await this.sec()).lztToken; if (!token) throw new Error("не задан токен LZT Market");
+    const r = await fetch("https://prod-api.lzt.market" + path, { method: opt.method || "GET", headers: { authorization: "Bearer " + token, accept: "application/json" } });
+    const t = await r.text(); let j = {}; try { j = t ? JSON.parse(t) : {}; } catch {}
+    if (!r.ok) throw Object.assign(new Error("LZT: " + (j.errors ? [].concat(j.errors).join(", ") : r.status === 429 ? "слишком часто, подожди" : "HTTP " + r.status)), { status: r.status });
+    return j;
+  }
+  // самые дешёвые номера страны на лолзе (цены — в валюте счёта на лолзе)
+  async numList(cc) {
+    const j = await this.lzt(`/telegram?country%5B%5D=${encodeURIComponent(cc)}&order_by=price_to_up`);
+    const arr = Array.isArray(j.items) ? j.items : [];
+    const items = arr.filter(i => i && i.canBuyItem !== false).map(i => ({ id: i.item_id, price: Number(i.price) })).filter(i => i.id && i.price > 0);
+    return { total: Number(j.totalItems) || items.length, items };
+  }
+  // обновляет наличие по несколько стран за раз (у лолза лимит запросов), самые старые — первыми
+  async numRefresh(st, max = 3, force = false) {
+    if (!st.num.on || this._nr || !(await this.sec()).lztToken) return;
+    this._nr = true;
+    try {
+      const cat = (await this.s.get("numcat")) || {}; let n = 0;
+      const order = st.num.countries.slice().sort((a, b) => ((cat[a] && cat[a].at) || 0) - ((cat[b] && cat[b].at) || 0));
+      for (const cc of order) {
+        if (n >= max) break;
+        if (!force && cat[cc] && Date.now() - cat[cc].at < 10 * 60e3) continue;
+        n++;
+        try { const r = await this.numList(cc); cat[cc] = { at: Date.now(), n: r.total, items: r.items.slice(0, 5) }; }
+        catch (e) { cat[cc] = Object.assign(cat[cc] || { n: 0, items: [] }, { at: Date.now(), err: e.message }); if (e.status === 429) break; }
+      }
+      await this.s.put("numcat", cat);
+    } finally { this._nr = false; }
+  }
+  // цена для покупателя в ₴ / $ / ₽: цена на лолзе по курсу + наценка
+  numRetail(st, raw, f) {
+    const cur = st.num.cur, k = cur === "usd" ? 1 : f && f.fiat && f.fiat[cur];
+    if (!k || !f || !f.fiat) return null;
+    const usd = raw / k * (1 + st.num.markup / 100);
+    return { usd: Math.ceil(usd * 100) / 100, uah: Math.ceil(usd * f.fiat.uah), rub: Math.ceil(usd * f.fiat.rub) };
+  }
+  async numCatalog(st) {
+    if (!st.num.on || !(await this.sec()).lztToken) return [];
+    await this.numRefresh(st, 4);
+    const cat = (await this.s.get("numcat")) || {}, f = await this.fx(), out = [];
+    for (const cc of st.num.countries) {
+      const c = cat[cc], meta = COUNTRIES[cc]; if (!c || !meta) continue;
+      const top = c.items[0], price = top ? this.numRetail(st, top.price, f) : null;
+      out.push({ cc, name: meta[0], dial: meta[1], n: top ? c.n : 0, price });
+    }
+    return out;
+  }
+  async numQuote(st, cc) {
+    if (!st.num.on || !(await this.sec()).lztToken) return { ok: false, err: "Номера сейчас недоступны" };
+    if (!COUNTRIES[cc] || !st.num.countries.includes(cc)) return { ok: false, err: "Эта страна недоступна" };
+    const c = ((await this.s.get("numcat")) || {})[cc];
+    if (!c || !c.items.length || Date.now() - c.at > 30 * 60e3) return { ok: false, err: "Сейчас нет в наличии — загляни позже" };
+    const price = this.numRetail(st, c.items[0].price, await this.fx());
+    if (!price) return { ok: false, err: "Курс валют ещё загружается — попробуй через минуту" };
+    const raw = c.items[0].price;
+    return { ok: true, cc, raw, maxRaw: raw * (1 + Math.min(st.num.markup, 15) / 100), price };   // дороже этого лимита бот номер не купит
+  }
+  // покупка номера на лолзе после оплаты. Перед покупкой ставим «отправляется»: даже при сбое номер не купится дважды
+  async deliverNum(o) {
+    o.status = "sending"; o.err = ""; o.sendAt = Date.now(); await this.putO(o);
+    const stop = async (msg, hold) => {
+      o.status = "check"; o.err = msg; await this.putO(o); await this.closeO(o);
+      await this.notifyOwners(`⚠️ Заказ #${o.id} (${what(o)}): ${esc(msg)}${hold ? "" : "\nНажми «Повторить» в админке, когда исправишь."}`);
+      await this.tg("sendMessage", { chat_id: o.uid, text: `⏳ Заказ #${o.id}: номер подбирается дольше обычного. Мы уже занимаемся этим — если что, напиши ${CONFIG.SUPPORT}` });
+    };
+    const retry = async msg => {   // ничего не куплено — можно безопасно повторить
+      o.tries = (o.tries || 0) + 1; o.err = msg;
+      if (o.tries >= 5) return stop(msg);
+      o.status = "paid"; await this.putO(o); await this.wake(30000);
+    };
+    let list;
+    try { list = await this.numList(o.cc); } catch (e) { return retry(e.message); }
+    const cand = list.items.filter(i => i.price <= o.maxRaw + 1e-9).slice(0, 3);
+    if (!cand.length) return retry(`нет номеров ${o.cc} по цене до ${o.maxRaw.toFixed(2)} — дорогие или закончились`);
+    let last = "";
+    for (const it of cand) {
+      let r;
+      try { r = await this.lzt(`/${it.id}/fast-buy?price=${encodeURIComponent(it.price)}`, { method: "POST" }); }
+      catch (e) {
+        if (e.status >= 400 && e.status < 500) { last = e.message; continue; }   // лолз точно отказал — пробуем следующий
+        return stop(`неизвестно, купился ли номер (item ${it.id}): ${e.message}. Проверь «Мои покупки» на lzt.market, чтобы не купить дважды`, true);
+      }
+      let phone = pickPhone(r);
+      if (!phone) { try { phone = pickPhone(await this.lzt(`/${it.id}`)); } catch {} }
+      o.num = { item: it.id, phone, raw: it.price };
+      if (!phone) return stop(`номер куплен (item ${it.id}), но телефон не прочитался — открой его на lzt.market и выдай вручную`, true);
+      return this.finishNum(o);
+    }
+    return retry(last || "не удалось купить");
+  }
+  async finishNum(o) {
+    o.status = "done"; o.doneAt = Date.now(); o.err = ""; await this.putO(o); await this.closeO(o);
+    const k = { mono: "uah", cp: "usd", ru: "rub" }[o.method], st = await this.settings();
+    const s = (await this.s.get("stats")) || { orders: 0, stars: 0, uah: 0, usd: 0, rub: 0, ton: 0 };
+    s.orders++; s.nums = (s.nums || 0) + 1; s[k] += Number(o.price); s.numRaw = (s.numRaw || 0) + o.num.raw; s.numCur = st.num.cur;
+    await this.s.put("stats", s);
+    const us = (await this.s.get("us:" + o.uid)) || { orders: 0, stars: 0, uah: 0, usd: 0, rub: 0, gifts: 0, first: Date.now() };
+    us.orders++; us[k] += Number(o.price); us.last = Date.now(); await this.s.put("us:" + o.uid, us);
+    if (o.method === "ru") { const d = (await this.s.get("ruDebt")) || { orders: 0, stars: 0, rub: 0, ton: 0, since: Date.now() }; d.orders++; d.rub += Number(o.price); await this.s.put("ruDebt", d); }
+    const origin = await this.s.get("origin");
+    await this.tg("sendMessage", { chat_id: o.uid, parse_mode: "HTML",
+      text: `✅ Номер готов!\n\n📱 <code>${esc(o.num.phone)}</code>\n\nОткрой Telegram → «Войти» → введи этот номер. Когда Telegram отправит код, нажми кнопку ниже — код придёт в магазин.`,
+      reply_markup: { inline_keyboard: [[{ text: "🔑 Получить код", web_app: { url: `${origin}/?order=${o.id}` } }]] } });
+  }
+  async numCode(u, b) {
+    const o = await this.getO(Number(b.id));
+    if (!o || o.uid !== u.id || o.kind !== "number" || o.status !== "done" || !o.num) return { ok: false, err: "Заказ не найден" };
+    if (Date.now() - o.doneAt > 72 * 3600e3) return { ok: false, err: "Срок получения кода вышел — напиши в поддержку " + CONFIG.SUPPORT };
+    if ((o.codeTries || 0) >= 60) return { ok: false, err: "Слишком много попыток — напиши в поддержку " + CONFIG.SUPPORT };
+    if (Date.now() - (o.codeAt || 0) < 4000) return { ok: true, code: "", wait: true };
+    o.codeAt = Date.now(); o.codeTries = (o.codeTries || 0) + 1; await this.putO(o);
+    try { return { ok: true, code: pickCode(await this.lzt(`/${o.num.item}/telegram-login-code`)) }; }
+    catch (e) { return { ok: false, err: e.message }; }
+  }
+
   // ---------- кошелёк и выдача ----------
   async key() {
     if (this._key) return this._key;
@@ -490,6 +640,13 @@ export class Store {
           if (o.tries >= 5) { o.status = "check"; await this.closeO(o); await this.notifyOwners(`⚠️ Заказ #${o.id} (${what(o)} → ${dst(o)}) не зачислился: ${esc(e.message)}`); }
           await this.putO(o); await this.wake(30000); }
       }
+      for (const o of (await this.openOrders()).filter(o => o.kind === "number")) {
+        if (o.status === "paid") await this.deliverNum(o);
+        else if (o.status === "sending" && Date.now() - (o.sendAt || 0) > 3 * 60e3) {   // завис посреди покупки — не повторяем, чтобы не купить дважды
+          o.status = "check"; o.err = "покупка номера зависла — проверь «Мои покупки» на lzt.market"; await this.putO(o); await this.closeO(o);
+          await this.notifyOwners(`⚠️ Заказ #${o.id} (${what(o)}): ${o.err}`);
+        }
+      }
       const inf = await this.s.get("inflight");
       if (inf) {
         const w = await this.s.get("wallet"), o = await this.getO(inf.id);
@@ -510,7 +667,7 @@ export class Store {
           if (o.status === "check") { await this.closeO(o); await this.notifyOwners(`⚠️ Заказ #${o.id} (${what(o)} → ${dst(o)}) не удалось отправить 3 раза. Проверь кошелёк и нажми «Повторить» в админке.`); }
         } else { await this.wake(10000); return; }
       }
-      const paid = (await this.openOrders()).filter(o => o.status === "paid" && o.dest !== "case").sort((a, b) => a.paidAt - b.paidAt);
+      const paid = (await this.openOrders()).filter(o => o.status === "paid" && o.dest !== "case" && o.kind !== "number").sort((a, b) => a.paidAt - b.paidAt);
       const o = paid[0]; if (!o) return;
       const sec = await this.sec(), st = await this.settings();
       const stop = async msg => {
@@ -589,6 +746,7 @@ export class Store {
       try { const r = await this.cp("getInvoices", { invoice_ids: cpW.map(o => o.inv).join(",") });
         for (const inv of r.items || []) await this.cpPaid(inv); } catch (e) { console.log("cp", e.message); }
     }
+    try { await this.numRefresh(st, 3); } catch (e) { console.log("num", e.message); }
     await this.deliver();
     orders = await this.openOrders();
     if (orders.some(o => o.status === "paid" || o.status === "sending")) await this.wake(15000);
@@ -603,7 +761,7 @@ export class Store {
       const m = ids.length ? await this.s.get(ids.map(i => "o:" + i)) : new Map();
       return { ok: true, name: NAME, support: CONFIG.SUPPORT, bot: await this.botName(), role: owner ? "owner" : checker ? "checker" : "",
         me: { id: u.id, username: u.username || "", first: u.first_name || "" },
-        shop: await (async () => { const R = await this.curRates(st); return { rates: R, auto: st.auto.on, case: this.caseOn() ? CONFIG.CASE.name : "", premium: st.premium.on ? await this.premRates(st) : null, min: st.min, max: st.max, on: { mono: st.on.mono && R.uah > 0, cp: st.on.cp && R.usd > 0, ru: st.on.ru && R.rub > 0 }, ttl: st.ttl }; })(),
+        shop: await (async () => { const R = await this.curRates(st); return { rates: R, auto: st.auto.on, case: this.caseOn() ? CONFIG.CASE.name : "", premium: st.premium.on ? await this.premRates(st) : null, min: st.min, max: st.max, on: { mono: st.on.mono && R.uah > 0, cp: st.on.cp && R.usd > 0, ru: st.on.ru && R.rub > 0 }, ttl: st.ttl, num: st.num.on && !!(await this.sec()).lztToken }; })(),
         orders: ids.map(i => m.get("o:" + i)).filter(Boolean).map(o => this.view(o)) };
     }
     if (act === "reviews") return { ok: true, ...(await this.reviewsPublic()) };
@@ -624,6 +782,8 @@ export class Store {
       try { const r = await new Fragment(sec.cookies).recipient(to); return { ok: true, name: r.name }; }
       catch (e) { return /нет такого/.test(e.message) ? { ok: false, err: "Пользователь @" + to + " не найден" } : { ok: true, name: "" }; }
     }
+    if (act === "numbers") return { ok: true, list: await this.numCatalog(st) };
+    if (act === "numcode") return this.numCode(u, b);
     if (act === "create") return this.create(u, b, st);
     if (act === "order") {
       const o = await this.getO(Number(b.id));
@@ -639,22 +799,24 @@ export class Store {
     return this.admin(act, u, b, st, owner);
   }
   async create(u, b, st) {
-    const prem = b.kind === "premium", months = Math.floor(Number(b.months));
+    const prem = b.kind === "premium", num = b.kind === "number", months = Math.floor(Number(b.months));
     if (prem && !(st.premium.on && [3, 6, 12].includes(months))) return { ok: false, err: "Premium: выбери 3, 6 или 12 месяцев" };
-    const toCase = !prem && b.dest === "case", qty = prem ? 0 : Math.floor(Number(b.qty)), method = String(b.method || "");
+    const toCase = !prem && !num && b.dest === "case", qty = prem ? 0 : num ? 1 : Math.floor(Number(b.qty)), method = String(b.method || "");
     if (toCase && !this.caseOn()) return { ok: false, err: "Пополнение казино сейчас выключено" };
-    const to = toCase ? low(CONFIG.CASE.name).replace(/[^a-z0-9_]/g, "_") : low(b.to);
-    if (!toCase && !/^[a-z0-9_]{4,32}$/.test(to)) return { ok: false, err: "Укажи юзернейм получателя" };
-    if (!prem && !(qty >= st.min && qty <= st.max)) return { ok: false, err: `Количество: от ${st.min} до ${st.max} ⭐` };
+    const to = num ? "" : toCase ? low(CONFIG.CASE.name).replace(/[^a-z0-9_]/g, "_") : low(b.to);
+    if (!toCase && !num && !/^[a-z0-9_]{4,32}$/.test(to)) return { ok: false, err: "Укажи юзернейм получателя" };
+    if (!prem && !num && !(qty >= st.min && qty <= st.max)) return { ok: false, err: `Количество: от ${st.min} до ${st.max} ⭐` };
     const cur = { mono: "uah", cp: "usd", ru: "rub" }[method];
-    const R = await this.curRates(st), rate = R[cur];
-    const total = prem ? (await this.premRates(st))[months][cur] : qty * rate;   // итоговая сумма заказа
+    let quote = null;
+    if (num) { quote = await this.numQuote(st, String(b.cc || "").toUpperCase()); if (!quote.ok) return quote; }
+    const R = await this.curRates(st), rate = num ? 1 : R[cur];
+    const total = num ? quote.price[cur] : prem ? (await this.premRates(st))[months][cur] : qty * rate;   // итоговая сумма заказа
     if (!st.on[method] || !(rate > 0) || !(total > 0)) return { ok: false, err: "Этот способ оплаты сейчас выключен" };
     const recent = ((await this.s.get("u:" + u.id)) || []).slice(-5), rm = recent.length ? await this.s.get(recent.map(i => "o:" + i)) : new Map();
     if ([...rm.values()].filter(o => o && o.status === "new").length >= 3) return { ok: false, err: "У тебя уже 3 неоплаченных заказа — оплати или отмени их" };
     const id = ((await this.s.get("seq")) || 1000) + 1; await this.s.put("seq", id);
     const now = Date.now();
-    const o = { id, uid: u.id, uname: u.username ? "@" + u.username : (u.first_name || ""), to, ...(toCase ? { dest: "case" } : {}), ...(prem ? { kind: "premium", months } : {}), qty, method, status: "new", created: now, expires: now + st.ttl * 60000 * (method === "ru" ? 4 : 1) };
+    const o = { id, uid: u.id, uname: u.username ? "@" + u.username : (u.first_name || ""), to, ...(toCase ? { dest: "case" } : {}), ...(prem ? { kind: "premium", months } : {}), ...(num ? { kind: "number", cc: quote.cc, raw: quote.raw, maxRaw: quote.maxRaw } : {}), qty, method, status: "new", created: now, expires: now + st.ttl * 60000 * (method === "ru" ? 4 : 1) };
     if (method === "mono") {
       if (!st.mono.card) return { ok: false, err: "Оплата Монобанком ещё не настроена" };
       const base = Math.ceil(total) * 100;
@@ -667,7 +829,7 @@ export class Store {
       o.price = (Math.ceil(total * 100) / 100).toFixed(2);
       const bot = await this.botName();
       const inv = await this.cp("createInvoice", { currency_type: "fiat", fiat: "USD", amount: o.price, accepted_assets: "USDT,TON",
-        description: `${prem ? "Telegram Premium на " + months + " мес." : qty + " ⭐"} для @${to} — ${NAME}`, payload: String(id), expires_in: st.ttl * 60, allow_comments: false,
+        description: num ? `Номер Telegram (${(COUNTRIES[quote.cc] || [quote.cc])[0]}) — ${NAME}` : `${prem ? "Telegram Premium на " + months + " мес." : qty + " ⭐"} для @${to} — ${NAME}`, payload: String(id), expires_in: st.ttl * 60, allow_comments: false,
         ...(bot ? { paid_btn_name: "openBot", paid_btn_url: "https://t.me/" + bot } : {}) });
       o.inv = inv.invoice_id; o.pay = { url: inv.mini_app_invoice_url || inv.bot_invoice_url };
     } else if (method === "ru") {
@@ -681,7 +843,7 @@ export class Store {
     if (method === "mono") await this.wake(62000);
     if (method === "ru") {
       const chk = await this.idsOf(st.ru.checkers.length ? st.ru.checkers : CONFIG.OWNERS);
-      for (const c of chk) await this.tg("sendMessage", { chat_id: c, text: `🆕 Заказ #${id} — карта РФ: ${what(o)} → @${to}, ${o.price} ₽. Жду скрин от покупателя.` });
+      for (const c of chk) await this.tg("sendMessage", { chat_id: c, text: `🆕 Заказ #${id} — карта РФ: ${what(o)}${num ? "" : " → @" + to}, ${o.price} ₽. Жду скрин от покупателя.` });
     }
     return { ok: true, order: this.view(o) };
   }
@@ -701,13 +863,14 @@ export class Store {
     if (act === "admin") {
       const sec = await this.sec();
       return { ok: true, role: "owner", settings: st, origin,
-        flags: { monoToken: !!sec.monoToken, cpToken: !!sec.cpToken, cookies: !!sec.cookies, mnemonic: !!this.env.WALLET_MNEMONIC, walletAddr: CONFIG.WALLET_ADDRESS || this.env.WALLET_ADDRESS || "", monoHook: !!(await this.s.get("monoHook")) },
+        flags: { lztToken: !!sec.lztToken, monoToken: !!sec.monoToken, cpToken: !!sec.cpToken, cookies: !!sec.cookies, mnemonic: !!this.env.WALLET_MNEMONIC, walletAddr: CONFIG.WALLET_ADDRESS || this.env.WALLET_ADDRESS || "", monoHook: !!(await this.s.get("monoHook")) },
         monoStat: await this.s.get("monoStat"), monoAcc: await this.s.get("monoAccAuto"),
         fragLink: await (async () => { const f = await this.s.get("fraglogin"); return f && f.qtoken && Date.now() - f.at < 5 * 60e3 ? "https://t.me/oauth?startapp=" + f.qtoken : ""; })(),
         prem: await this.premRates(st), premUsd: await this.s.get("premUsd"),
         fx: await this.fx(), fxErr: this._fxErr || "", live: await this.curRates(st), starUsd: await this.s.get("starUsd"),
         wallet: await this.s.get("wallet"), stats: await this.s.get("stats"), debt: await this.s.get("ruDebt"),
         queue: (await this.openOrders()).filter(o => o.status === "paid" || o.status === "sending").length,
+        numRows: await (async () => { const cat = (await this.s.get("numcat")) || {}; return st.num.countries.filter(cc => COUNTRIES[cc]).map(cc => ({ cc, name: COUNTRIES[cc][0], n: cat[cc] ? cat[cc].n : null, raw: cat[cc] && cat[cc].items[0] ? cat[cc].items[0].price : null, at: cat[cc] ? cat[cc].at : 0, err: cat[cc] ? cat[cc].err || "" : "" })); })(),
         orders: await listOrders(() => true) };
     }
     if (act === "set") {
@@ -727,17 +890,34 @@ export class Store {
       if (p.maxTonPerStar !== undefined) st.maxTonPerStar = Math.max(0.001, Number(p.maxTonPerStar) || DEF.maxTonPerStar);
       if (p.ttl !== undefined) st.ttl = Math.min(180, Math.max(10, Math.floor(Number(p.ttl)) || 30));
       if (p.notifyUnmatched !== undefined) st.notifyUnmatched = !!p.notifyUnmatched;
+      if (p.num) {
+        if (p.num.on !== undefined) st.num.on = !!p.num.on;
+        if (p.num.markup !== undefined) st.num.markup = Math.min(500, Math.max(0, Number(p.num.markup) || 0));
+        if (["rub", "uah", "usd"].includes(p.num.cur)) st.num.cur = p.num.cur;
+        if (typeof p.num.countries === "string") st.num.countries = [...new Set(p.num.countries.toUpperCase().split(/[^A-Z]+/).filter(c => COUNTRIES[c]))].slice(0, 60);
+      }
       await this.s.put("settings", st);
       const s = b.secrets || {}, sec = await this.sec();
       if (typeof s.cpToken === "string" && s.cpToken.trim()) {
         sec.cpToken = s.cpToken.trim();
         try { await this.s.put("sec", sec); await this.cp("getMe"); } catch (e) { delete sec.cpToken; await this.s.put("sec", sec); return { ok: false, err: e.message }; }
       }
+      if (typeof s.lztToken === "string" && s.lztToken.trim()) {
+        sec.lztToken = s.lztToken.trim();
+        try { await this.s.put("sec", sec); await this.lzt("/me"); } catch (e) { delete sec.lztToken; await this.s.put("sec", sec); return { ok: false, err: e.message }; }
+      }
       if (typeof s.monoToken === "string" && s.monoToken.trim()) { sec.monoToken = s.monoToken.trim(); await this.s.put("monoSince", Date.now()); await this.s.delete("monoHook"); }
       if (typeof s.cookies === "string" && s.cookies.trim()) sec.cookies = s.cookies.trim().replace(/^cookie:\s*/i, "");
-      for (const k of ["cpToken", "monoToken", "cookies"]) if (s[k] === "-") delete sec[k];
+      for (const k of ["cpToken", "monoToken", "cookies", "lztToken"]) if (s[k] === "-") delete sec[k];
       await this.s.put("sec", sec);
       return { ok: true };
+    }
+    if (act === "num_check") {
+      try {
+        const me = await this.lzt("/me"), u = me.user || me;
+        await this.numRefresh(st, 6, true);
+        return { ok: true, name: u.username || u.user_id || "", balance: u.balance, hold: u.hold };
+      } catch (e) { return { ok: false, err: e.message }; }
     }
     if (act === "wallet_check") return { ok: true, wallet: await this.walletCheck() };
     if (act === "frag_login") {   // вход в Fragment без копирования кук

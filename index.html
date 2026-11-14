@@ -119,6 +119,11 @@ select.fi option{color:#000}
 .empty{text-align:center;padding:26px 10px}
 .empty>div:first-child{font-size:46px;margin-bottom:6px}
 a{color:var(--acc)}
+.cr{display:flex;align-items:center;gap:12px;width:100%;text-align:left;border:1px solid rgba(255,255,255,.07);background:var(--card);color:#fff;border-radius:20px;padding:14px;margin-bottom:10px}
+.cr .fg{font-size:30px;line-height:1}.cr .t{flex:1;min-width:0}.cr .t b{display:block;font-size:16px}.cr .t small{color:var(--muted);font-weight:700;font-size:12.5px}
+.cr .p{font:900 15px Nunito,sans-serif;color:var(--sun);white-space:nowrap;text-align:right}
+.cr.off{opacity:.45}
+.fb{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}.fb button{border:1px solid var(--line);background:var(--card2);color:#fff;border-radius:999px;padding:9px 14px;font:800 13.5px Nunito,sans-serif}.fb button.on{background:#2c3158;border-color:var(--acc)}
 </style>
 </head>
 <body>
@@ -128,6 +133,7 @@ a{color:var(--acc)}
 </div>
 <nav class="nav" id="nav">
   <button data-t="buy" class="on"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5L2.5 9.4l6.6-.9z"/></svg>Купить</button>
+  <button data-t="nums" id="navn" style="display:none">Номера</button>
   <button data-t="orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>Заказы</button>
   <button data-t="reviews">Отзывы</button>
   <button data-t="profile">Профиль</button>
@@ -146,7 +152,7 @@ const PM = { mono: { n: "Монобанк", d: "Перевод на карту, 
   cp: { n: "CryptoBot", d: "USDT или TON, мгновенно", img: "data:image/webp;base64,UklGRsoCAABXRUJQVlA4IL4CAADQEwCdASpgAGAAPlEmjkUjrSEVWgRU0AUEptTYAFFU5K2p27luOIvAGHr4gPUxtgPMB+oHrsegzeLTLg8ANJkzyMdOuA/Sg19lYrJKpbrZSzfgZQo6PdvU4LXvE0jRUmfaVjR5LeUqThyezpmv5csckn8GeTGuvG2wnNj5hTbxDaG8cSbY4CPf0cDsfHXw3ZzLTxNJYBXhcvpKPiiVQ8+tWqVGirWWgAD+7p/anUiOD9/+Wf6Id5GR//TSP8aR/jR65pBeNm77NdvIrfSAG8AGGXRO3E1L9GpCqZiCTzrHX8NaBhML60VLzEGQE1W0YJjMoCmjQuZKcX9XQExOka51I46U6U3ZWV+NW+OnRQgVF/nzazumQRzpCRiYNKSylTVeP9jd/zuyoqLKIBg1Gsh+FfTdVg4/79GE7abJwRci/z0wkxiovSctticjDF/lqJN6N/HJ2KTY/vf2wySe4Dj0kp9XO+lThnGRJ3ZX8gjs5jayhWgEry5AIc8qpsurWnseEjwXj5uPg4uLidRQ7Vb/mfBxA4SZ2Arf9oAvByFeg7tOah1PMMxYuay+ae5krXk0SqfaxN2MU/qCAf8SISYPwOnjXHtAxK6MV7BJ74OjbzzOWHa1CIpZ6V2ov2ehUOl9Kf60QCbkKZA14eo7IaEe7wuxApK5L0OsirgcE2aY4KrDxLkxbKmXIQ7ak0VHrKjAvY83Pp+SVPLrdbALvzFVScjI6vqAYn3yUlvgTp6MEzRg+vC81Fs/+K7BW3bITM+47MQNlPZeYM4sE/sKse/Z58pr/oOJn9GG1wL/qN0y0bC4DSI9dOXuZsGvk7RbhtbS6REw1L0Xv+z5IGgiSwUic+fBvKlJH04J4XCSSlVLqEB9KCg5iSV7ZltYGlMVHnbPL1nFNcjxuqOtHlCSjR0a615I4uQzqAqCFbFAAAA=", cur: "$" },
   ru: { n: "Карта РФ", d: "Перевод + скрин, после проверки", img: "data:image/webp;base64,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", cur: "₽" } };
 const RATE = { mono: "uah", cp: "usd", ru: "rub" };
-const WHAT = o => o.kind === "premium" ? `👑 Premium ${o.months} мес.` : `${fmt(o.qty)} ${SI}`;
+const WHAT = o => o.kind === "number" ? "📱 Номер" : o.kind === "premium" ? `👑 Premium ${o.months} мес.` : `${fmt(o.qty)} ${SI}`;
 // цена Premium (3/6/12 мес) для способа оплаты
 function pprice(m, mo) { const p = S.D.shop.premium && S.D.shop.premium[mo]; const v = p ? p[RATE[m]] : 0; return m === "cp" ? (+v).toFixed(2) : Math.ceil(v); }
 
@@ -161,6 +167,7 @@ async function api(act, data) {
 function copy(t) { (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast("Скопировано ✅")).catch(() => { const a = document.createElement("textarea"); a.value = t; document.body.appendChild(a); a.select(); document.execCommand("copy"); a.remove(); toast("Скопировано ✅"); }); haptic(); }
 function price(m, q) { const r = S.D.shop.rates[RATE[m]]; if (m === "mono") return Math.ceil(q * r); if (m === "cp") return (Math.ceil(q * r * 100) / 100).toFixed(2); return Math.ceil(q * r); }
 const fmt = n => Number(n).toLocaleString("ru-RU");
+const TO = o => o.kind === "number" ? "📱 " + esc(o.cname || o.cc) : o.dest === "case" ? "🎰 " + esc(S.D.shop.case || "казино") : "@" + esc(o.to);
 const dt = t => new Date(t).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
 document.querySelectorAll(".nav button").forEach(b => b.onclick = () => setTab(b.dataset.t));
@@ -173,6 +180,7 @@ function stopPoll() { if (poll) { clearInterval(poll); poll = null; } }
 function render() {
   showBack(false);
   if (S.tab === "buy") return rBuy();
+  if (S.tab === "nums") return rNums();
   if (S.tab === "orders") return rOrders();
   if (S.tab === "profile") return rProfile();
   if (S.tab === "reviews") return rReviews();
@@ -261,6 +269,62 @@ async function buy() {
   if (r.ok) { haptic("medium"); S.D.orders.unshift(r.order); openOrder(r.order, () => rBuy()); }
 }
 
+// ---------- номера ----------
+const flag = cc => String.fromCodePoint(...[...cc].map(c => 127397 + c.charCodeAt(0)));
+const numPrice = (c, m) => { const v = c.price[RATE[m]]; return m === "cp" ? (+v).toFixed(2) : Math.ceil(v); };
+async function rNums() {
+  if (!S.N) V.innerHTML = `<div class="spin" style="margin-top:30vh"></div>`;
+  const r = await api("numbers"); if (!r.ok || S.tab !== "nums" || S.order) return;
+  S.N = r.list; drawNums();
+}
+function drawNums() {
+  showBack(false);
+  const sh = S.D.shop, ms = Object.keys(PM).filter(m => sh.on[m]); if (!ms.includes(S.method)) S.method = ms[0] || "";
+  const pr = x => x.price ? x.price.uah : 1e9;
+  let L = (S.N || []).slice();
+  if (S.nstock) L = L.filter(x => x.n > 0);
+  L = L.filter({ any: () => true, 100: x => pr(x) < 100, 300: x => pr(x) >= 100 && pr(x) <= 300, "300p": x => pr(x) > 300 }[S.nprice || "any"]);
+  const so = S.nsort || "cheap";
+  L.sort(so === "cheap" ? (a, b) => pr(a) - pr(b) : so === "exp" ? (a, b) => (b.price ? b.price.uah : -1) - (a.price ? a.price.uah : -1) : so === "name" ? (a, b) => a.name.localeCompare(b.name, "ru") : (a, b) => b.n - a.n);
+  const chip = (k, v, n) => `<button class="${(S[k] || (k === "nsort" ? "cheap" : "any")) === v ? "on" : ""}" onclick="S.${k}='${v}';drawNums()">${n}</button>`;
+  V.innerHTML = `<h1 style="margin:4px 2px 12px">📱 Номера Telegram</h1>
+  <button class="btn ghost sm" style="margin-bottom:12px" onclick="S.nfilt=!S.nfilt;drawNums()">⚙️ Фильтры</button>
+  ${S.nfilt ? `<div class="card"><div class="lbl">Сортировка</div><div class="fb">${chip("nsort", "cheap", "Сначала дешевле")}${chip("nsort", "exp", "Сначала дороже")}${chip("nsort", "name", "По названию")}${chip("nsort", "stock", "Где больше в наличии")}</div>
+    <div class="lbl">Цена</div><div class="fb">${chip("nprice", "any", "Любая цена")}${chip("nprice", "100", "до 100₴")}${chip("nprice", "300", "100–300₴")}${chip("nprice", "300p", "300+₴")}</div>
+    <div class="tg">Только в наличии ${sw("nst", !!S.nstock).replace('onclick="this.classList.toggle(\'on\')"', 'onclick="S.nstock=!S.nstock;drawNums()"')}</div></div>` : ""}
+  ${!ms.length ? `<div class="card empty"><div>🛠</div><b>Оплата настраивается</b><div class="mut">Загляни чуть позже</div></div>`
+    : L.length ? L.map(x => `<button class="cr ${x.n > 0 && x.price ? "" : "off"}" ${x.n > 0 && x.price ? `onclick="pickNum('${x.cc}')"` : "disabled"}><span class="fg">${flag(x.cc)}</span><span class="t"><b>${esc(x.name)} +${esc(x.dial)}</b><small>${x.n > 0 ? fmt(x.n) + " доступно" : "нет в наличии"}</small></span><span class="p">${x.n > 0 && x.price ? "від " + numPrice(x, S.method) + " " + PM[S.method].cur : ""}</span></button>`).join("")
+    : `<div class="card empty"><div>📭</div><b>${(S.N || []).length ? "Ничего не найдено" : "Номеров пока нет"}</b><div class="mut">${(S.N || []).length ? "Измени фильтры" : "Загляни чуть позже"}</div></div>`}
+  <div class="mut" style="text-align:center;margin-top:8px;font-size:12.5px">Поддержка: ${esc(S.D.support)}</div>`;
+}
+function pickNum(cc) { S.ncc = cc; S.stack.push(drawNums); showBack(true); drawNumBuy(); V.scrollTop = 0; }
+function drawNumBuy() {
+  const c = S.N.find(x => x.cc === S.ncc), ms = Object.keys(PM).filter(m => S.D.shop.on[m]);
+  V.innerHTML = `<div class="card"><div style="display:flex;align-items:center;gap:12px"><span style="font-size:34px">${flag(c.cc)}</span><div><b style="font-size:19px">${esc(c.name)} +${esc(c.dial)}</b><div class="mut">${fmt(c.n)} доступно</div></div></div>
+    <div class="mut" style="margin-top:12px;font-size:13px;line-height:1.5">Номер выдаётся автоматически сразу после оплаты. Код для входа получишь здесь же, в магазине.</div></div>
+  <div class="card"><div class="lbl">Способ оплаты</div>${ms.map(m => `<button class="pm ${m === S.method ? "on" : ""}" data-m="${m}"><span class="ic"><img src="${PM[m].img}" alt=""></span><span class="t"><b>${PM[m].n}</b><small>${PM[m].d}</small></span><span class="pr">${numPrice(c, m)} ${PM[m].cur}</span></button>`).join("")}</div>
+  <button class="btn" id="nbuy" onclick="buyNum()">Купить за ${numPrice(c, S.method)} ${PM[S.method].cur}</button>`;
+  V.querySelectorAll(".pm").forEach(b => b.onclick = () => { S.method = b.dataset.m; haptic(); drawNumBuy(); });
+}
+async function buyNum() {
+  const b = $("#nbuy"); b.disabled = true; b.textContent = "Создаём заказ…";
+  const r = await api("create", { kind: "number", cc: S.ncc, method: S.method });
+  if (r.ok) { haptic("medium"); S.D.orders.unshift(r.order); openOrder(r.order, drawNums); } else { S.N = null; S.stack.pop(); rNums(); }
+}
+function numDone(o) {
+  return `<div style="font-size:54px;line-height:1.1">📱</div><h2>Номер готов!</h2>
+  <div style="text-align:left"><div class="lbl">Твой номер</div><div class="copy"><span>${esc(o.phone)}</span><button class="mini" onclick="copy('${esc(o.phone)}')">Копировать</button></div>
+  <div class="mut" style="margin:6px 2px 12px;font-size:13px;line-height:1.5">1) В Telegram нажми «Войти» и введи этот номер.<br>2) Когда Telegram отправит код — жми кнопку ниже, код придёт сюда.</div>
+  <div id="ncode"></div><button class="btn" id="ncb" onclick="getCode()">🔑 Получить код</button></div>`;
+}
+async function getCode() {
+  const b = $("#ncb"), box = $("#ncode"); b.disabled = true; b.textContent = "Ищем код…";
+  const r = await api("numcode", { id: S.order.id }); b.disabled = false; b.textContent = "🔑 Получить код ещё раз";
+  if (!r.ok) return;
+  box.innerHTML = r.code ? `<div class="lbl">Код для входа</div><div class="copy"><span class="big">${esc(r.code)}</span><button class="mini" onclick="copy('${esc(r.code)}')">Копировать</button></div>`
+    : `<div class="hint" style="margin-bottom:10px">Кода пока нет. Убедись, что запросил его в Telegram, подожди 10–20 секунд и нажми снова</div>`;
+}
+
 // ---------- заказ ----------
 function openOrder(o, back) { S.stack.push(back || render); S.order = o; rOrder(); stopPoll(); poll = setInterval(refreshOrder, 4000); V.scrollTop = 0; }
 async function refreshOrder() {
@@ -278,8 +342,9 @@ function rOrder() {
   showBack(true);
   const o = S.order, p = o.pay || {}, waiting = o.status === "new" || (o.status === "expired" && o.method === "ru");
   let body = "";
-  if (o.status === "done") body = `<div style="font-size:64px;line-height:1.1">✅</div><h1>Готово!</h1><div class="mut">${WHAT(o)} ${o.kind === "premium" ? "подарен" : "отправлены на"} ${o.dest === "case" ? "🎰 " + esc(S.D.shop.case || "казино") : "@" + esc(o.to)}</div>`;
-  else if (o.status === "paid" || o.status === "sending") body = `<div class="spin"></div><h2>Отправляем звёзды…</h2><div class="mut">Оплата получена. Обычно это занимает 1–3 минуты</div>`;
+  if (o.status === "done" && o.kind === "number") body = numDone(o);
+  else if (o.status === "done") body = `<div style="font-size:64px;line-height:1.1">✅</div><h1>Готово!</h1><div class="mut">${WHAT(o)} ${o.kind === "premium" ? "подарен" : "отправлены на"} ${TO(o)}</div>`;
+  else if (o.status === "paid" || o.status === "sending") body = `<div class="spin"></div><h2>${o.kind === "number" ? "Подбираем номер…" : "Отправляем звёзды…"}</h2><div class="mut">Оплата получена. Обычно это занимает 1–3 минуты</div>`;
   else if (o.status === "check") body = `<div style="font-size:54px">🛠</div><h2>Заказ проверяется</h2><div class="mut">Оплата получена, выдача на ручной проверке. Если долго — напиши ${esc(S.D.support)}</div>`;
   else if (["canceled", "rejected"].includes(o.status) || (o.status === "expired" && o.method !== "ru")) body = `<div style="font-size:54px">${o.status === "rejected" ? "❌" : "⌛"}</div><h2>${esc(o.statusText)}</h2>${o.status === "expired" && o.method === "mono" ? `<div class="mut">Если ты уже перевёл деньги — не переживай, платёж ещё найдётся автоматически в течение нескольких часов</div>` : ""}`;
   else if (o.method === "mono") body = `<div class="lbl">Переведи ровно</div><div class="copy"><span class="big">${esc(o.price)} ₴</span><button class="mini" onclick="copy('${esc(o.price)}')">Копировать</button></div>
@@ -293,7 +358,7 @@ function rOrder() {
     <div class="mut" style="margin-bottom:12px">После оплаты отправь <b>скриншот перевода</b> боту в чат. Как только его проверят — звёзды уйдут автоматически.${o.shot ? "<br><br>📨 Скрин получен, ждём проверку" : ""}</div>
     <button class="btn blue" onclick="toChat()">📸 Отправить скрин в бот</button>`;
   V.innerHTML = `<div class="card" style="text-align:center"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><b>Заказ #${o.id}</b><span class="st ${o.status}">${esc(o.statusText)}</span></div>
-    <div style="font:900 22px Nunito,sans-serif;margin-bottom:14px">${WHAT(o)} → ${o.dest === "case" ? "🎰 " + esc(S.D.shop.case || "казино") : "@" + esc(o.to)}</div><div style="text-align:${waiting && o.method !== "cp" ? "left" : "center"}">${body}</div></div>
+    <div style="font:900 22px Nunito,sans-serif;margin-bottom:14px">${o.kind === "number" ? "📱 Номер · " + esc(o.cname || o.cc) : WHAT(o) + " → " + TO(o)}</div><div style="text-align:${waiting && o.method !== "cp" ? "left" : "center"}">${body}</div></div>
     ${o.status === "done" ? rateBox(o) : ""}
     ${o.status === "new" ? `<button class="btn ghost sm" onclick="cancelO()">Отменить заказ</button>` : `<button class="btn ghost sm" onclick="setTab('buy')">Купить ещё</button>`}`;
 }
@@ -314,7 +379,7 @@ async function rReviews() {
   V.innerHTML = `<div class="card"><div class="rvt"><div class="big">${r.n ? r.avg.toFixed(1) : "—"}</div><div><div class="rs" style="font-size:20px">${stars(Math.round(r.avg))}</div>
     <div class="mut" style="font-size:13.5px;margin-top:4px">${r.n ? `${fmt(r.clients)} ${pl(r.clients, "клиент", "клиента", "клиентов")} · ${fmt(r.n)} ${pl(r.n, "оценка", "оценки", "оценок")}` : "Пока нет отзывов"}</div></div></div></div>
   <div class="card">${r.list.length ? r.list.map(x => `<div class="rv"><div class="h"><span class="rs">${stars(x.stars)}</span><span class="w">@${esc(x.name)} · ${new Date(x.at).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" })}</span></div>
-    <div class="w" style="margin-top:6px">купил: ${x.kind === "premium" ? `👑 Premium на ${x.months} мес.` : `${SI} ${fmt(x.qty)} ${pl(x.qty, "звезду", "звезды", "звёзд")}`}${x.dest === "case" ? " · 🎰 в " + esc(S.D.shop.case || "казино") : ""}</div>${x.text ? `<p>${esc(x.text)}</p>` : ""}</div>`).join("")
+    <div class="w" style="margin-top:6px">купил: ${x.kind === "number" ? "📱 номер Telegram" : x.kind === "premium" ? `👑 Premium на ${x.months} мес.` : `${SI} ${fmt(x.qty)} ${pl(x.qty, "звезду", "звезды", "звёзд")}`}${x.dest === "case" ? " · 🎰 в " + esc(S.D.shop.case || "казино") : ""}</div>${x.text ? `<p>${esc(x.text)}</p>` : ""}</div>`).join("")
     : `<div class="mut" style="text-align:center;padding:18px 0">Здесь появятся отзывы покупателей.<br>Оставить отзыв можно после выполненного заказа.</div>`}</div>`;
 }
 const pl = (n, a, b, c) => { n = Math.abs(n) % 100; const d = n % 10; return n > 10 && n < 20 ? c : d === 1 ? a : d >= 2 && d <= 4 ? b : c; };
@@ -352,16 +417,42 @@ async function rProfile() {
   <button class="btn" onclick="setTab('buy')">⭐ Купить звёзды</button>
   <div class="mut" style="text-align:center;margin-top:12px;font-size:12.5px">Поддержка: ${esc(S.D.support)}</div>`;
 }
-const oRow = o => `<div class="ol" data-id="${o.id}"><div class="q">${WHAT(o)}<small>${o.dest === "case" ? "🎰 " + esc(S.D.shop.case || "казино") : "@" + esc(o.to)} · #${o.id} · ${dt(o.created)}</small></div><div class="r"><b>${esc(o.price)} ${o.cur}</b><span class="st ${o.status}">${esc(o.statusText)}</span></div></div>`;
+const oRow = o => `<div class="ol" data-id="${o.id}"><div class="q">${WHAT(o)}<small>${TO(o)} · #${o.id} · ${dt(o.created)}</small></div><div class="r"><b>${esc(o.price)} ${o.cur}</b><span class="st ${o.status}">${esc(o.statusText)}</span></div></div>`;
 
 // ---------- админка ----------
 async function loadAdmin() { const r = await api("admin"); if (r.ok) S.A = r; return r.ok; }
 async function rAdmin() {
   if (!S.A) { V.innerHTML = `<div class="spin" style="margin-top:30vh"></div>`; if (!(await loadAdmin())) return; }
-  const A = S.A, tabs = [["orders", "📦 Заказы"], ["shop", "⭐ Магазин"], ["pay", "💳 Оплата"], ["wallet", "💎 Кошелёк"], ["ru", "🇷🇺 РФ"], ["rv", "💬 Отзывы"]];
+  const A = S.A, tabs = [["orders", "📦 Заказы"], ["shop", "⭐ Магазин"], ["pay", "💳 Оплата"], ["wallet", "💎 Кошелёк"], ["ru", "🇷🇺 РФ"], ["num", "📱 Номера"], ["rv", "💬 Отзывы"]];
   V.innerHTML = `<div class="tabs2">${tabs.map(([k, n]) => `<button data-a="${k}" class="${S.at === k ? "on" : ""}">${n}</button>`).join("")}</div><div id="ab"></div>`;
   V.querySelectorAll(".tabs2 button").forEach(b => b.onclick = () => { S.at = b.dataset.a; rAdmin(); });
-  ({ orders: aOrders, shop: aShop, pay: aPay, wallet: aWallet, ru: aRu, rv: aRv })[S.at]();
+  ({ orders: aOrders, shop: aShop, pay: aPay, wallet: aWallet, ru: aRu, num: aNum, rv: aRv })[S.at]();
+}
+function aNum() {
+  const s = S.A.settings, n = s.num, f = S.A.flags, st = S.A.stats || {}, rows = S.A.numRows || [];
+  $("#ab").innerHTML = `
+  <div class="card"><h2>📱 Номера с LZT Market</h2>
+    <div class="tg">Продавать номера ${sw("num_on", n.on)}</div>
+    <div class="fl">API-токен lzt.market ${f.lztToken ? '<span class="ok">— сохранён ✅</span>' : '<span class="bad">— не задан</span>'}</div>
+    <input class="fi" id="ltok" placeholder="${f.lztToken ? "оставь пустым, чтобы не менять" : "вставь токен"}" autocomplete="off">
+    <div class="f2"><div><div class="fl">Наценка, %</div><input class="fi" id="nmk" type="number" step="1" value="${n.markup}"></div>
+    <div><div class="fl">Валюта счёта на лолзе</div><select class="fi" id="ncur">${["rub", "uah", "usd"].map(c => `<option value="${c}" ${n.cur === c ? "selected" : ""}>${c.toUpperCase()}</option>`).join("")}</select></div></div>
+    <div class="fl">Страны (коды через пробел)</div><textarea class="ta" id="ncs">${esc(n.countries.join(" "))}</textarea>
+    <div class="mut" style="font-size:12.5px;margin:4px 0 10px;line-height:1.5">Коды ISO: UA RU US BR IN ID … Наличие обновляется по 3 страны в минуту (лимит лолза). Валюта должна совпадать с валютой твоего счёта на лолзе — по ней считаются цены.</div>
+    <button class="btn sm" onclick="saveNum()">Сохранить</button></div>
+  <div class="card"><h2>Состояние</h2>
+    <button class="btn ghost sm" id="nchk" onclick="numCheck()">Проверить токен и обновить наличие</button>
+    <div id="nres" class="mut" style="margin:10px 0;font-size:13px;line-height:1.6"></div>
+    <div class="mut" style="font-size:13px">Продано номеров: <b>${fmt(st.nums || 0)}</b>${st.numRaw ? ` · потрачено на лолзе: <b>${fmt(Math.round(st.numRaw))} ${(st.numCur || n.cur).toUpperCase()}</b>` : ""}</div>
+    ${rows.length ? `<div style="margin-top:10px">${rows.map(r => `<div class="ol"><div class="q">${flag(r.cc)} ${esc(r.name)}<small>${r.err ? `<span class="bad">${esc(r.err)}</span>` : r.n == null ? "ещё не загружено" : r.n + " в наличии"}</small></div><div class="r"><b>${r.raw != null ? r.raw + " " + n.cur.toUpperCase() : "—"}</b><small class="mut">на лолзе</small></div></div>`).join("")}</div>` : ""}</div>`;
+}
+function saveNum() { save({ num: { on: isOn("num_on"), markup: $("#nmk").value, cur: $("#ncur").value, countries: $("#ncs").value } }, { lztToken: $("#ltok").value }); }
+async function numCheck() {
+  const b = $("#nchk"); b.disabled = true; b.textContent = "Проверяю… (до 20 сек)";
+  const r = await api("num_check"); b.disabled = false; b.textContent = "Проверить токен и обновить наличие";
+  if (!r.ok) return;
+  await loadAdmin(); aNum();
+  $("#nres").innerHTML = `Токен работает ✅${r.name ? " · " + esc(r.name) : ""}${r.balance != null ? ` · баланс на лолзе: <b>${esc(r.balance)}</b>` : ""}`;
 }
 async function aRv() {
   $("#ab").innerHTML = `<div class="spin"></div>`;
@@ -402,7 +493,7 @@ function aOrder(o) {
   if (!["done", "sending", "canceled", "rejected"].includes(o.status)) acts.push(["cancel", "Отменить", "btn ghost"]);
   V.innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">Заказ #${o.id}</h2><span class="st ${o.status}">${esc(o.statusText)}</span></div>
     <div style="margin-top:12px;line-height:1.75;font-weight:700">
-    <b>${WHAT(o)}</b> → ${o.dest === "case" ? "🎰 " + esc(S.D.shop.case || "казино") : "@" + esc(o.to)}<br>💳 ${PM[o.method].n}: <b>${esc(o.price)} ${o.cur}</b><br>👤 ${esc(o.uname)} (id ${o.uid})<br>🕐 ${dt(o.created)}${o.paidAt ? `<br>💰 Оплачен ${dt(o.paidAt)}${o.by ? " · " + esc(o.by) : ""}` : ""}${o.doneAt ? `<br>✅ Выдан ${dt(o.doneAt)}` : ""}${o.ton ? `<br>💎 ${(o.ton / 1e9).toFixed(4)} TON` : ""}${o.method === "ru" ? `<br>📸 Скрин: ${o.shot ? "есть (в боте)" : "нет"}` : ""}
+    <b>${WHAT(o)}</b> → ${TO(o)}<br>💳 ${PM[o.method].n}: <b>${esc(o.price)} ${o.cur}</b><br>👤 ${esc(o.uname)} (id ${o.uid})<br>🕐 ${dt(o.created)}${o.paidAt ? `<br>💰 Оплачен ${dt(o.paidAt)}${o.by ? " · " + esc(o.by) : ""}` : ""}${o.doneAt ? `<br>✅ Выдан ${dt(o.doneAt)}` : ""}${o.ton ? `<br>💎 ${(o.ton / 1e9).toFixed(4)} TON` : ""}${o.method === "ru" ? `<br>📸 Скрин: ${o.shot ? "есть (в боте)" : "нет"}` : ""}
     ${o.err ? `<br><span class="bad">⚠️ ${esc(o.err)}</span>` : ""}</div></div>
     ${acts.map(([a, n, c]) => `<button class="${c}" style="margin-bottom:8px" onclick="oAct(${o.id},'${a}')">${n}</button>`).join("")}`;
 }
@@ -543,7 +634,7 @@ async function rChecker() {
   const r = await api("admin"); if (!r.ok) return; S.A = r; const d = r.debt || {};
   const wait = r.orders.filter(o => o.status === "new" || o.status === "expired");
   V.innerHTML = `<h1 style="margin:4px 2px 12px">Карта РФ</h1>
-  <div class="card"><h2>Ждут проверки (${wait.length})</h2>${wait.length ? wait.map(o => `<div class="ol"><div class="q">${WHAT(o)} · ${esc(o.price)} ₽<small>#${o.id} · ${o.dest === "case" ? "🎰 " + esc(S.D.shop.case || "казино") : "@" + esc(o.to)} · ${dt(o.created)} · скрин: ${o.shot ? "✅" : "нет"}</small></div>
+  <div class="card"><h2>Ждут проверки (${wait.length})</h2>${wait.length ? wait.map(o => `<div class="ol"><div class="q">${WHAT(o)} · ${esc(o.price)} ₽<small>#${o.id} · ${TO(o)} · ${dt(o.created)} · скрин: ${o.shot ? "✅" : "нет"}</small></div>
     <div class="r" style="display:flex;gap:6px"><button class="mini" onclick="oAct(${o.id},'paid')">✅</button><button class="mini g" onclick="oAct(${o.id},'reject')">❌</button></div></div>`).join("") : `<div class="mut">Нет заказов</div>`}
     <div class="mut" style="margin-top:8px;font-size:12.5px">Скрины приходят тебе в бот с кнопками</div></div>
   <div class="card"><h2>Реквизиты</h2><textarea class="ta" id="rud">${esc(r.ru.details)}</textarea><button class="btn sm" onclick="api('set',{ru:{details:$('#rud').value}}).then(x=>x.ok&&toast('Сохранено ✅'))">Сохранить</button></div>
@@ -567,9 +658,14 @@ async function rChecker() {
     const o = await api("create", { dest: "case", qty: S.qty, method: S.method });
     if (o.ok) { S.D.orders.unshift(o.order); return openOrder(o.order, () => rBuy()); }
   }
+  $("#navn").style.display = r.shop.num ? "flex" : "none";
   if (r.role) document.querySelector(".nav .adm").style.display = "flex";
   if (r.role === "checker") document.querySelector(".nav .adm").lastChild.textContent = "Карта РФ";
   render();
+  try {   // ссылка из бота на конкретный заказ (?order=ID) — сразу открываем его
+    const oid = +new URLSearchParams(location.search).get("order"), oo = oid && S.D.orders.find(x => x.id === oid);
+    if (oo) { S.tab = "orders"; document.querySelectorAll(".nav button").forEach(b => b.classList.toggle("on", b.dataset.t === "orders")); rOrders(); openOrder(oo, rOrders); }
+  } catch (e) {}
 })();
 </script>
 </body>
