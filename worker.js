@@ -16,7 +16,7 @@ import * as F from "./fragment.js";
 const NAME = CONFIG.NAME || "STRELA STARS";
 const enc = new TextEncoder();
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
-const what = o => o.kind === "premium" ? `👑 Premium на ${o.months} мес.` : o.kind === "number" ? `📱 Номер (${(COUNTRIES[o.cc] || [o.cc])[0]})` : `${o.qty} ⭐`;
+const what = o => o.kind === "premium" ? `👑 Premium на ${o.months} мес.` : o.kind === "number" ? `📱 Номер (${(COUNTRIES[o.cc] || [o.cc])[0]}${o.sp === "clean" ? ", без спамблока" : o.sp === "spam" ? ", со спамблоком" : ""})` : `${o.qty} ⭐`;
 const dst = o => o.kind === "number" ? "Telegram" : o.dest === "case" ? "баланс " + ((CONFIG.CASE && CONFIG.CASE.name) || "казино") : "@" + o.to;
 const low = s => String(s || "").replace(/^@/, "").trim().toLowerCase();
 const esc = s => String(s ?? "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
@@ -220,7 +220,7 @@ export class Store {
   async wake(ms = 1000) { const cur = await this.s.getAlarm(); const at = Date.now() + ms; if (!cur || cur > at) await this.s.setAlarm(at); }
   view(o, full) {
     const v = { id: o.id, rv: o.rv || 0, to: o.to, dest: o.dest || "", kind: o.kind || "", months: o.months || 0, qty: o.qty, method: o.method, price: o.price, cur: CUR[o.method], status: o.status, statusText: STATUS[o.status], created: o.created, doneAt: o.doneAt, pay: o.pay, expires: o.expires,
-      cc: o.cc || "", cname: o.cc ? (COUNTRIES[o.cc] || [""])[0] : "", phone: o.kind === "number" && o.status === "done" && o.num ? o.num.phone : "" };
+      cc: o.cc || "", sp: o.sp || "", cname: o.cc ? (COUNTRIES[o.cc] || [""])[0] : "", phone: o.kind === "number" && o.status === "done" && o.num ? o.num.phone : "" };
     if (full) Object.assign(v, { uid: o.uid, uname: o.uname, err: o.err, by: o.by, ton: o.ton, tries: o.tries, paidAt: o.paidAt, shot: o.shot });
     return v;
   }
@@ -478,7 +478,11 @@ export class Store {
   async numList(cc) {
     const j = await this.lzt(`/telegram?country%5B%5D=${encodeURIComponent(cc)}&order_by=price_to_up`);
     const arr = Array.isArray(j.items) ? j.items : [];
-    const items = arr.filter(i => i && i.canBuyItem !== false).map(i => ({ id: i.item_id, price: Number(i.price) })).filter(i => i.id && i.price > 0);
+    // спамблок: ищем в номере поле со словом spam (true/1/yes — есть, false/0/no — нет); если поля нет — null (неизвестно)
+    const spam = i => { for (const k of Object.keys(i)) if (/spam/i.test(k)) { const v = i[k];
+      if (v === true || v === 1 || v === "1" || /^(yes|true)$/i.test(String(v))) return true;
+      if (v === false || v === 0 || v === "0" || /^(no|false)$/i.test(String(v))) return false; } return null; };
+    const items = arr.filter(i => i && i.canBuyItem !== false).map(i => ({ id: i.item_id, price: Number(i.price), sp: spam(i) })).filter(i => i.id && i.price > 0);
     return { total: Number(j.totalItems) || items.length, items };
   }
   // обновляет наличие по несколько стран за раз (у лолза лимит запросов), самые старые — первыми
@@ -492,7 +496,7 @@ export class Store {
         if (n >= max) break;
         if (!force && cat[cc] && Date.now() - cat[cc].at < 10 * 60e3) continue;
         n++;
-        try { const r = await this.numList(cc); cat[cc] = { at: Date.now(), n: r.total, items: r.items.slice(0, 5) }; }
+        try { const r = await this.numList(cc); cat[cc] = { at: Date.now(), n: r.total, items: r.items.slice(0, 5), clean: r.items.filter(x => x.sp === false).slice(0, 5), spam: r.items.filter(x => x.sp === true).slice(0, 5), known: r.items.some(x => x.sp !== null) }; }
         catch (e) { cat[cc] = Object.assign(cat[cc] || { n: 0, items: [] }, { at: Date.now(), err: e.message }); if (e.status === 429) break; }
       }
       await this.s.put("numcat", cat);
@@ -512,19 +516,22 @@ export class Store {
     for (const cc of st.num.countries) {
       const c = cat[cc], meta = COUNTRIES[cc]; if (!c || !meta) continue;
       const top = c.items[0], price = top ? this.numRetail(st, top.price, f) : null;
-      out.push({ cc, name: meta[0], dial: meta[1], n: top ? c.n : 0, price });
+      const pc = c.clean && c.clean[0] ? this.numRetail(st, c.clean[0].price, f) : null, ps = c.spam && c.spam[0] ? this.numRetail(st, c.spam[0].price, f) : null;
+      out.push({ cc, name: meta[0], dial: meta[1], n: top ? c.n : 0, price, pc, ps, known: !!c.known });
     }
     return out;
   }
-  async numQuote(st, cc) {
+  async numQuote(st, cc, kind = "any") {
     if (!st.num.on || !(await this.sec()).lztToken) return { ok: false, err: "Номера сейчас недоступны" };
     if (!COUNTRIES[cc] || !st.num.countries.includes(cc)) return { ok: false, err: "Эта страна недоступна" };
     const c = ((await this.s.get("numcat")) || {})[cc];
     if (!c || !c.items.length || Date.now() - c.at > 30 * 60e3) return { ok: false, err: "Сейчас нет в наличии — загляни позже" };
-    const price = this.numRetail(st, c.items[0].price, await this.fx());
+    const pool = kind === "clean" ? c.clean || [] : kind === "spam" ? c.spam || [] : c.items;
+    if (!pool.length) return { ok: false, err: kind === "clean" ? "Номеров без спамблока сейчас нет" : "Номеров со спамблоком сейчас нет" };
+    const price = this.numRetail(st, pool[0].price, await this.fx());
     if (!price) return { ok: false, err: "Курс валют ещё загружается — попробуй через минуту" };
-    const raw = c.items[0].price;
-    return { ok: true, cc, raw, maxRaw: raw * (1 + Math.min(st.num.markup, 15) / 100), price };   // дороже этого лимита бот номер не купит
+    const raw = pool[0].price;
+    return { ok: true, cc, kind, raw, maxRaw: raw * (1 + Math.min(st.num.markup, 15) / 100), price };   // дороже этого лимита бот номер не купит
   }
   // покупка номера на лолзе после оплаты. Перед покупкой ставим «отправляется»: даже при сбое номер не купится дважды
   async deliverNum(o) {
@@ -541,7 +548,7 @@ export class Store {
     };
     let list;
     try { list = await this.numList(o.cc); } catch (e) { return retry(e.message); }
-    const cand = list.items.filter(i => i.price <= o.maxRaw + 1e-9).slice(0, 3);
+    const cand = list.items.filter(i => i.price <= o.maxRaw + 1e-9 && (o.sp === "clean" ? i.sp === false : o.sp === "spam" ? i.sp === true : true)).slice(0, 3);
     if (!cand.length) return retry(`нет номеров ${o.cc} по цене до ${o.maxRaw.toFixed(2)} — дорогие или закончились`);
     let last = "";
     for (const it of cand) {
@@ -815,7 +822,7 @@ export class Store {
     if (!prem && !num && !(qty >= st.min && qty <= st.max)) return { ok: false, err: `Количество: от ${st.min} до ${st.max} ⭐` };
     const cur = { mono: "uah", cp: "usd", ru: "rub" }[method];
     let quote = null;
-    if (num) { quote = await this.numQuote(st, String(b.cc || "").toUpperCase()); if (!quote.ok) return quote; }
+    if (num) { quote = await this.numQuote(st, String(b.cc || "").toUpperCase(), ["clean", "spam"].includes(b.spam) ? b.spam : "any"); if (!quote.ok) return quote; }
     const R = await this.curRates(st), rate = num ? 1 : R[cur];
     const total = num ? quote.price[cur] : prem ? (await this.premRates(st))[months][cur] : qty * rate;   // итоговая сумма заказа
     if (!st.on[method] || !(rate > 0) || !(total > 0)) return { ok: false, err: "Этот способ оплаты сейчас выключен" };
@@ -823,7 +830,7 @@ export class Store {
     if ([...rm.values()].filter(o => o && o.status === "new").length >= 3) return { ok: false, err: "У тебя уже 3 неоплаченных заказа — оплати или отмени их" };
     const id = ((await this.s.get("seq")) || 1000) + 1; await this.s.put("seq", id);
     const now = Date.now();
-    const o = { id, uid: u.id, uname: u.username ? "@" + u.username : (u.first_name || ""), to, ...(toCase ? { dest: "case" } : {}), ...(prem ? { kind: "premium", months } : {}), ...(num ? { kind: "number", cc: quote.cc, raw: quote.raw, maxRaw: quote.maxRaw } : {}), qty, method, status: "new", created: now, expires: now + st.ttl * 60000 * (method === "ru" ? 4 : 1) };
+    const o = { id, uid: u.id, uname: u.username ? "@" + u.username : (u.first_name || ""), to, ...(toCase ? { dest: "case" } : {}), ...(prem ? { kind: "premium", months } : {}), ...(num ? { kind: "number", cc: quote.cc, sp: quote.kind === "any" ? "" : quote.kind, raw: quote.raw, maxRaw: quote.maxRaw } : {}), qty, method, status: "new", created: now, expires: now + st.ttl * 60000 * (method === "ru" ? 4 : 1) };
     if (method === "mono") {
       if (!st.mono.card) return { ok: false, err: "Оплата Монобанком ещё не настроена" };
       const base = Math.ceil(total) * 100;
@@ -918,6 +925,15 @@ export class Store {
       for (const k of ["cpToken", "monoToken", "cookies", "lztToken"]) if (s[k] === "-") delete sec[k];
       await this.s.put("sec", sec);
       return { ok: true };
+    }
+    if (act === "num_probe") {   // диагностика: какие поля реально отдаёт лолз (чтобы проверить фильтр страны и спамблок)
+      try {
+        const cc = String(b.cc || "UA").toUpperCase().slice(0, 2), j = await this.lzt(`/telegram?country%5B%5D=${encodeURIComponent(cc)}&order_by=price_to_up`);
+        const items = Array.isArray(j.items) ? j.items : [], first = items[0] || {}, pick = {};
+        for (const k of Object.keys(first)) if (/spam|country|phone|premium|price|origin|title|item_id|state/i.test(k)) pick[k] = typeof first[k] === "object" ? JSON.stringify(first[k]).slice(0, 80) : String(first[k]).slice(0, 80);
+        const seen = {}; for (const i of items) for (const k of Object.keys(i)) if (/country|spam/i.test(k)) { const key = k + "=" + String(i[k]).slice(0, 30); seen[key] = (seen[key] || 0) + 1; }
+        return { ok: true, cc, total: j.totalItems, count: items.length, keys: Object.keys(first).join(", "), sample: pick, seen };
+      } catch (e) { return { ok: false, err: e.message }; }
     }
     if (act === "num_check") {
       try {

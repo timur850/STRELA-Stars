@@ -271,7 +271,8 @@ async function buy() {
 
 // ---------- номера ----------
 const flag = cc => String.fromCodePoint(...[...cc].map(c => 127397 + c.charCodeAt(0)));
-const numPrice = (c, m) => { const v = c.price[RATE[m]]; return m === "cp" ? (+v).toFixed(2) : Math.ceil(v); };
+const kp = c => S.nspam === "clean" ? c.pc : S.nspam === "spam" ? c.ps : c.price;
+const numPrice = (c, m) => { const k = kp(c); if (!k) return "—"; const v = k[RATE[m]]; return m === "cp" ? (+v).toFixed(2) : Math.ceil(v); };
 async function rNums() {
   if (!S.N) V.innerHTML = `<div class="spin" style="margin-top:30vh"></div>`;
   const r = await api("numbers"); if (!r.ok || S.tab !== "nums" || S.order) return;
@@ -280,20 +281,21 @@ async function rNums() {
 function drawNums() {
   showBack(false);
   const sh = S.D.shop, ms = Object.keys(PM).filter(m => sh.on[m]); if (!ms.includes(S.method)) S.method = ms[0] || "";
-  const pr = x => x.price ? x.price.uah : 1e9;
+  const pr = x => kp(x) ? kp(x).uah : 1e9;
   let L = (S.N || []).slice();
   if (S.nstock) L = L.filter(x => x.n > 0);
   L = L.filter({ any: () => true, 100: x => pr(x) < 100, 300: x => pr(x) >= 100 && pr(x) <= 300, "300p": x => pr(x) > 300 }[S.nprice || "any"]);
   const so = S.nsort || "cheap";
-  L.sort(so === "cheap" ? (a, b) => pr(a) - pr(b) : so === "exp" ? (a, b) => (b.price ? b.price.uah : -1) - (a.price ? a.price.uah : -1) : so === "name" ? (a, b) => a.name.localeCompare(b.name, "ru") : (a, b) => b.n - a.n);
+  L.sort(so === "cheap" ? (a, b) => pr(a) - pr(b) : so === "exp" ? (a, b) => (kp(b) ? kp(b).uah : -1) - (kp(a) ? kp(a).uah : -1) : so === "name" ? (a, b) => a.name.localeCompare(b.name, "ru") : (a, b) => b.n - a.n);
   const chip = (k, v, n) => `<button class="${(S[k] || (k === "nsort" ? "cheap" : "any")) === v ? "on" : ""}" onclick="S.${k}='${v}';drawNums()">${n}</button>`;
   V.innerHTML = `<h1 style="margin:4px 2px 12px">📱 Номера Telegram</h1>
   <button class="btn ghost sm" style="margin-bottom:12px" onclick="S.nfilt=!S.nfilt;drawNums()">⚙️ Фильтры</button>
   ${S.nfilt ? `<div class="card"><div class="lbl">Сортировка</div><div class="fb">${chip("nsort", "cheap", "Сначала дешевле")}${chip("nsort", "exp", "Сначала дороже")}${chip("nsort", "name", "По названию")}${chip("nsort", "stock", "Где больше в наличии")}</div>
     <div class="lbl">Цена</div><div class="fb">${chip("nprice", "any", "Любая цена")}${chip("nprice", "100", "до 100₴")}${chip("nprice", "300", "100–300₴")}${chip("nprice", "300p", "300+₴")}</div>
+    ${(S.N || []).some(x => x.known) ? `<div class="lbl">Спамблок</div><div class="fb">${chip("nspam", "any", "Любой")}${chip("nspam", "clean", "Без спамблока")}${chip("nspam", "spam", "Со спамблоком")}</div>` : ""}
     <div class="tg">Только в наличии ${sw("nst", !!S.nstock).replace('onclick="this.classList.toggle(\'on\')"', 'onclick="S.nstock=!S.nstock;drawNums()"')}</div></div>` : ""}
   ${!ms.length ? `<div class="card empty"><div>🛠</div><b>Оплата настраивается</b><div class="mut">Загляни чуть позже</div></div>`
-    : L.length ? L.map(x => `<button class="cr ${x.n > 0 && x.price ? "" : "off"}" ${x.n > 0 && x.price ? `onclick="pickNum('${x.cc}')"` : "disabled"}><span class="fg">${flag(x.cc)}</span><span class="t"><b>${esc(x.name)} +${esc(x.dial)}</b><small>${x.n > 0 ? fmt(x.n) + " доступно" : "нет в наличии"}</small></span><span class="p">${x.n > 0 && x.price ? "від " + numPrice(x, S.method) + " " + PM[S.method].cur : ""}</span></button>`).join("")
+    : L.length ? L.map(x => `<button class="cr ${x.n > 0 && kp(x) ? "" : "off"}" ${x.n > 0 && kp(x) ? `onclick="pickNum('${x.cc}')"` : "disabled"}><span class="fg">${flag(x.cc)}</span><span class="t"><b>${esc(x.name)} +${esc(x.dial)}</b><small>${x.n > 0 ? (S.nspam && S.nspam !== "any" ? (kp(x) ? "в наличии" : "нет таких") : fmt(x.n) + " доступно") : "нет в наличии"}</small></span><span class="p">${x.n > 0 && kp(x) ? "від " + numPrice(x, S.method) + " " + PM[S.method].cur : ""}</span></button>`).join("")
     : `<div class="card empty"><div>📭</div><b>${(S.N || []).length ? "Ничего не найдено" : "Номеров пока нет"}</b><div class="mut">${(S.N || []).length ? "Измени фильтры" : "Загляни чуть позже"}</div></div>`}
   <div class="mut" style="text-align:center;margin-top:8px;font-size:12.5px">Поддержка: ${esc(S.D.support)}</div>`;
 }
@@ -302,13 +304,14 @@ function drawNumBuy() {
   const c = S.N.find(x => x.cc === S.ncc), ms = Object.keys(PM).filter(m => S.D.shop.on[m]);
   V.innerHTML = `<div class="card"><div style="display:flex;align-items:center;gap:12px"><span style="font-size:34px">${flag(c.cc)}</span><div><b style="font-size:19px">${esc(c.name)} +${esc(c.dial)}</b><div class="mut">${fmt(c.n)} доступно</div></div></div>
     <div class="mut" style="margin-top:12px;font-size:13px;line-height:1.5">Номер выдаётся автоматически сразу после оплаты. Код для входа получишь здесь же, в магазине.</div></div>
+  ${c.known ? `<div class="card"><div class="lbl">Спамблок</div><div class="seg" style="margin:0"><button class="${(S.nspam || "any") === "any" ? "on" : ""}" onclick="S.nspam='any';drawNumBuy()">Любой</button><button class="${S.nspam === "clean" ? "on" : ""}" onclick="S.nspam='clean';drawNumBuy()">Без спамблока</button><button class="${S.nspam === "spam" ? "on" : ""}" onclick="S.nspam='spam';drawNumBuy()">Со спамблоком</button></div>${kp(c) ? "" : `<div class="hint bad">Таких номеров сейчас нет — выбери другой вариант</div>`}</div>` : ""}
   <div class="card"><div class="lbl">Способ оплаты</div>${ms.map(m => `<button class="pm ${m === S.method ? "on" : ""}" data-m="${m}"><span class="ic"><img src="${PM[m].img}" alt=""></span><span class="t"><b>${PM[m].n}</b><small>${PM[m].d}</small></span><span class="pr">${numPrice(c, m)} ${PM[m].cur}</span></button>`).join("")}</div>
-  <button class="btn" id="nbuy" onclick="buyNum()">Купить за ${numPrice(c, S.method)} ${PM[S.method].cur}</button>`;
+  <button class="btn" id="nbuy" onclick="buyNum()" ${kp(c) ? "" : "disabled"}>${kp(c) ? `Купить за ${numPrice(c, S.method)} ${PM[S.method].cur}` : "Нет в наличии"}</button>`;
   V.querySelectorAll(".pm").forEach(b => b.onclick = () => { S.method = b.dataset.m; haptic(); drawNumBuy(); });
 }
 async function buyNum() {
   const b = $("#nbuy"); b.disabled = true; b.textContent = "Создаём заказ…";
-  const r = await api("create", { kind: "number", cc: S.ncc, method: S.method });
+  const r = await api("create", { kind: "number", cc: S.ncc, method: S.method, spam: S.nspam || "any" });
   if (r.ok) { haptic("medium"); S.D.orders.unshift(r.order); openOrder(r.order, drawNums); } else { S.N = null; S.stack.pop(); rNums(); }
 }
 function numDone(o) {
@@ -443,10 +446,17 @@ function aNum() {
   <div class="card"><h2>Состояние</h2>
     <button class="btn ghost sm" id="nchk" onclick="numCheck()">Проверить токен и обновить наличие</button>
     <div id="nres" class="mut" style="margin:10px 0;font-size:13px;line-height:1.6"></div>
+    <button class="btn ghost sm" id="nprb" onclick="numProbe()">🔍 Показать поля ответа лолза</button><pre id="nprv" class="mut" style="white-space:pre-wrap;word-break:break-all;font-size:12px;margin-top:8px"></pre>
     <div class="mut" style="font-size:13px">Продано номеров: <b>${fmt(st.nums || 0)}</b>${st.numRaw ? ` · потрачено на лолзе: <b>${fmt(Math.round(st.numRaw))} ${(st.numCur || n.cur).toUpperCase()}</b>` : ""}</div>
     ${rows.length ? `<div style="margin-top:10px">${rows.map(r => `<div class="ol"><div class="q">${flag(r.cc)} ${esc(r.name)}<small>${r.err ? `<span class="bad">${esc(r.err)}</span>` : r.n == null ? "ещё не загружено" : r.n + " в наличии"}</small></div><div class="r"><b>${r.raw != null ? r.raw + " " + n.cur.toUpperCase() : "—"}</b><small class="mut">на лолзе</small></div></div>`).join("")}</div>` : ""}</div>`;
 }
 function saveNum() { save({ num: { on: isOn("num_on"), markup: $("#nmk").value, cur: $("#ncur").value, countries: $("#ncs").value } }, { lztToken: $("#ltok").value }); }
+async function numProbe() {
+  const b = $("#nprb"); b.disabled = true; b.textContent = "Запрашиваю…";
+  const cc = (S.A.settings.num.countries[0] || "UA"), r = await api("num_probe", { cc }); b.disabled = false; b.textContent = "🔍 Показать поля ответа лолза";
+  if (!r.ok) return;
+  $("#nprv").textContent = `страна ${r.cc}: всего ${r.total}, на странице ${r.count}\nполя: ${r.keys}\n\nпример: ${JSON.stringify(r.sample, null, 1)}\n\nзначения country/spam в выдаче: ${JSON.stringify(r.seen)}`;
+}
 async function numCheck() {
   const b = $("#nchk"); b.disabled = true; b.textContent = "Проверяю… (до 20 сек)";
   const r = await api("num_check"); b.disabled = false; b.textContent = "Проверить токен и обновить наличие";
