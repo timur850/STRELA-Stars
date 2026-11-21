@@ -475,14 +475,16 @@ export class Store {
     return j;
   }
   // самые дешёвые номера страны на лолзе (цены — в валюте счёта на лолзе)
-  async numList(cc) {
-    const j = await this.lzt(`/telegram?country%5B%5D=${encodeURIComponent(cc)}&order_by=price_to_up`);
+  // sp: "clean" — только без спамблока (spam=no), "spam" — только со спамблоком (spam=yes), иначе — любые
+  async numList(cc, sp) {
+    const q = sp === "clean" ? "&spam=no" : sp === "spam" ? "&spam=yes" : "";
+    const j = await this.lzt(`/telegram?country%5B%5D=${encodeURIComponent(cc)}&order_by=price_to_up${q}`);
     const arr = Array.isArray(j.items) ? j.items : [];
     // спамблок: ищем в номере поле со словом spam (true/1/yes — есть, false/0/no — нет); если поля нет — null (неизвестно)
     const spam = i => { for (const k of Object.keys(i)) if (/spam/i.test(k)) { const v = i[k];
       if (v === true || v === 1 || v === "1" || /^(yes|true)$/i.test(String(v))) return true;
       if (v === false || v === 0 || v === "0" || /^(no|false)$/i.test(String(v))) return false; } return null; };
-    const items = arr.filter(i => i && i.canBuyItem !== false).map(i => ({ id: i.item_id, price: Number(i.price), sp: spam(i) })).filter(i => i.id && i.price > 0);
+    const items = arr.filter(i => i && i.canBuyItem !== false).map(i => ({ id: i.item_id, price: Number(i.price), sp: sp === "clean" ? false : sp === "spam" ? true : spam(i) })).filter(i => i.id && i.price > 0);
     return { total: Number(j.totalItems) || items.length, items };
   }
   // обновляет наличие по несколько стран за раз (у лолза лимит запросов), самые старые — первыми
@@ -496,7 +498,12 @@ export class Store {
         if (n >= max) break;
         if (!force && cat[cc] && Date.now() - cat[cc].at < 10 * 60e3) continue;
         n++;
-        try { const r = await this.numList(cc); cat[cc] = { at: Date.now(), n: r.total, items: r.items.slice(0, 5), clean: r.items.filter(x => x.sp === false).slice(0, 5), spam: r.items.filter(x => x.sp === true).slice(0, 5), known: r.items.some(x => x.sp !== null) }; }
+        try {
+          // два запроса к лолзу: без спамблока и со спамблоком — так фильтр работает всегда
+          const cl = await this.numList(cc, "clean"), sb = await this.numList(cc, "spam");
+          const all = cl.items.concat(sb.items).sort((a, b) => a.price - b.price);
+          cat[cc] = { at: Date.now(), n: cl.total + sb.total, nc: cl.total, ns: sb.total, items: all.slice(0, 5), clean: cl.items.slice(0, 5), spam: sb.items.slice(0, 5), known: true };
+        }
         catch (e) { cat[cc] = Object.assign(cat[cc] || { n: 0, items: [] }, { at: Date.now(), err: e.message }); if (e.status === 429) break; }
       }
       await this.s.put("numcat", cat);
@@ -511,13 +518,13 @@ export class Store {
   }
   async numCatalog(st) {
     if (!st.num.on || !(await this.sec()).lztToken) return [];
-    await this.numRefresh(st, 4);
+    await this.numRefresh(st, 1);
     const cat = (await this.s.get("numcat")) || {}, f = await this.fx(), out = [];
     for (const cc of st.num.countries) {
       const c = cat[cc], meta = COUNTRIES[cc]; if (!c || !meta) continue;
       const top = c.items[0], price = top ? this.numRetail(st, top.price, f) : null;
       const pc = c.clean && c.clean[0] ? this.numRetail(st, c.clean[0].price, f) : null, ps = c.spam && c.spam[0] ? this.numRetail(st, c.spam[0].price, f) : null;
-      out.push({ cc, name: meta[0], dial: meta[1], n: top ? c.n : 0, price, pc, ps, known: !!c.known });
+      out.push({ cc, name: meta[0], dial: meta[1], n: top ? c.n : 0, nc: c.nc, ns: c.ns, price, pc, ps, known: !!c.known });
     }
     return out;
   }
@@ -547,7 +554,7 @@ export class Store {
       o.status = "paid"; await this.putO(o); await this.wake(30000);
     };
     let list;
-    try { list = await this.numList(o.cc); } catch (e) { return retry(e.message); }
+    try { list = await this.numList(o.cc, o.sp); } catch (e) { return retry(e.message); }
     const cand = list.items.filter(i => i.price <= o.maxRaw + 1e-9 && (o.sp === "clean" ? i.sp === false : o.sp === "spam" ? i.sp === true : true)).slice(0, 3);
     if (!cand.length) return retry(`нет номеров ${o.cc} по цене до ${o.maxRaw.toFixed(2)} — дорогие или закончились`);
     let last = "";
@@ -760,7 +767,7 @@ export class Store {
       try { const r = await this.cp("getInvoices", { invoice_ids: cpW.map(o => o.inv).join(",") });
         for (const inv of r.items || []) await this.cpPaid(inv); } catch (e) { console.log("cp", e.message); }
     }
-    try { await this.numRefresh(st, 3); } catch (e) { console.log("num", e.message); }
+    try { await this.numRefresh(st, 2); } catch (e) { console.log("num", e.message); }
     await this.deliver();
     orders = await this.openOrders();
     if (orders.some(o => o.status === "paid" || o.status === "sending")) await this.wake(15000);
@@ -938,7 +945,7 @@ export class Store {
     if (act === "num_check") {
       try {
         const me = await this.lzt("/me"), u = me.user || me;
-        await this.numRefresh(st, 6, true);
+        await this.numRefresh(st, 4, true);
         return { ok: true, name: u.username || u.user_id || "", balance: u.balance, hold: u.hold };
       } catch (e) { return { ok: false, err: e.message }; }
     }
