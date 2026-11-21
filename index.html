@@ -318,14 +318,23 @@ function numDone(o) {
   return `<div style="font-size:54px;line-height:1.1">📱</div><h2>Номер готов!</h2>
   <div style="text-align:left"><div class="lbl">Твой номер</div><div class="copy"><span>${esc(o.phone)}</span><button class="mini" onclick="copy('${esc(o.phone)}')">Копировать</button></div>
   <div class="mut" style="margin:6px 2px 12px;font-size:13px;line-height:1.5">1) В Telegram нажми «Войти» и введи этот номер.<br>2) Когда Telegram отправит код — жми кнопку ниже, код придёт сюда.</div>
-  <div id="ncode"></div><button class="btn" id="ncb" onclick="getCode()">🔑 Получить код</button></div>`;
+  <div id="ncode"></div><button class="btn" id="ncb" onclick="getCode(0)">🔑 Получить код</button></div>`;
 }
-async function getCode() {
-  const b = $("#ncb"), box = $("#ncode"); b.disabled = true; b.textContent = "Ищем код…";
-  const r = await api("numcode", { id: S.order.id }); b.disabled = false; b.textContent = "🔑 Получить код ещё раз";
+let codeTimer = null;
+async function getCode(auto) {
+  clearTimeout(codeTimer);
+  const b = $("#ncb"), box = $("#ncode"); if (!b || !S.order) return;
+  const oid = S.order.id; b.disabled = true; b.textContent = "Ищем код…";
+  const r = await api("numcode", { id: oid }); if (!S.order || S.order.id !== oid || !$("#ncb")) return;
+  b.disabled = false; b.textContent = "🔑 Получить код ещё раз";
   if (!r.ok) return;
-  box.innerHTML = r.code ? `<div class="lbl">Код для входа</div><div class="copy"><span class="big">${esc(r.code)}</span><button class="mini" onclick="copy('${esc(r.code)}')">Копировать</button></div>`
-    : `<div class="hint" style="margin-bottom:10px">Кода пока нет. Убедись, что запросил его в Telegram, подожди 10–20 секунд и нажми снова</div>`;
+  if (r.replaced) { toast("Номер нерабочий — выдаём замену"); S.order.status = "paid"; S.order.statusText = "оплачен, в очереди"; rOrder(); stopPoll(); poll = setInterval(refreshOrder, 4000); return; }
+  if (r.dead) { box.innerHTML = `<div class="hint bad" style="margin-bottom:10px">${esc(r.text)}</div>`; return; }
+  if (r.code) { box.innerHTML = `<div class="lbl">Код для входа</div><div class="copy"><span class="big">${esc(r.code)}</span><button class="mini" onclick="copy('${esc(r.code)}')">Копировать</button></div>`; return; }
+  // кода ещё нет — сами проверяем снова каждые 6 секунд (до ~3 минут)
+  const n = (auto || 0) + 1;
+  box.innerHTML = `<div class="hint" style="margin-bottom:10px">⏳ Код ещё не пришёл. Введи номер в Telegram и нажми «Далее» — код появится здесь сам${n < 30 ? "…" : ". Если долго нет — нажми кнопку ещё раз"}</div>`;
+  if (n < 30) codeTimer = setTimeout(() => getCode(n), 6000);
 }
 
 // ---------- заказ ----------

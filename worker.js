@@ -577,15 +577,20 @@ export class Store {
   async finishNum(o) {
     o.status = "done"; o.doneAt = Date.now(); o.err = ""; await this.putO(o); await this.closeO(o);
     const k = { mono: "uah", cp: "usd", ru: "rub" }[o.method], st = await this.settings();
+    if (o.statsDone) {   // это замена нерабочего номера — деньги уже посчитаны, учитываем только расход на лолзе
+      const s = (await this.s.get("stats")) || {}; s.numRaw = (s.numRaw || 0) + o.num.raw; await this.s.put("stats", s);
+    } else {
+    o.statsDone = true; await this.putO(o);
     const s = (await this.s.get("stats")) || { orders: 0, stars: 0, uah: 0, usd: 0, rub: 0, ton: 0 };
     s.orders++; s.nums = (s.nums || 0) + 1; s[k] += Number(o.price); s.numRaw = (s.numRaw || 0) + o.num.raw; s.numCur = st.num.cur;
     await this.s.put("stats", s);
     const us = (await this.s.get("us:" + o.uid)) || { orders: 0, stars: 0, uah: 0, usd: 0, rub: 0, gifts: 0, first: Date.now() };
     us.orders++; us[k] += Number(o.price); us.last = Date.now(); await this.s.put("us:" + o.uid, us);
     if (o.method === "ru") { const d = (await this.s.get("ruDebt")) || { orders: 0, stars: 0, rub: 0, ton: 0, since: Date.now() }; d.orders++; d.rub += Number(o.price); await this.s.put("ruDebt", d); }
+    }
     const origin = await this.s.get("origin");
     await this.tg("sendMessage", { chat_id: o.uid, parse_mode: "HTML",
-      text: `✅ Номер готов!\n\n📱 <code>${esc(o.num.phone)}</code>\n\nОткрой Telegram → «Войти» → введи этот номер. Когда Telegram отправит код, нажми кнопку ниже — код придёт в магазин.`,
+      text: `✅ ${o.repl ? "Замена готова" : "Номер готов"}!\n\n📱 <code>${esc(o.num.phone)}</code>\n\nОткрой Telegram → «Войти» → введи этот номер. Когда Telegram отправит код, нажми кнопку ниже — код придёт в магазин.`,
       reply_markup: { inline_keyboard: [[{ text: "🔑 Получить код", web_app: { url: `${origin}/?order=${o.id}` } }]] } });
   }
   async numCode(u, b) {
@@ -597,13 +602,42 @@ export class Store {
     o.codeAt = Date.now(); o.codeTries = (o.codeTries || 0) + 1; await this.putO(o);
     let code = "";
     try { code = pickCode(await this.lzt(`/${o.num.item}/telegram-login-code`)); }
-    catch (e) { return { ok: false, err: e.message }; }
+    catch (e) {
+      if (/код.{0,40}не найден|code.{0,20}not found/i.test(e.message)) return { ok: true, code: "", notyet: true };
+      if (/сесси|session|заблокир|blocked|invalid|unauthorized/i.test(e.message)) return this.numDead(o, e.message);
+      return { ok: false, err: e.message };
+    }
+    if (code && !o.codeOk) { o.codeOk = true; await this.putO(o); }
     if (code && !o.rvAsked) {   // код пришёл — покупка состоялась, просим оценку (один раз)
       o.rvAsked = true; await this.putO(o);
       await this.tg("sendMessage", { chat_id: o.uid, text: `✅ Рады, что всё получилось! Оцени, пожалуйста, покупку в ${NAME} — отзыв увидят другие покупатели:`,
         reply_markup: { inline_keyboard: [[1, 2, 3, 4, 5].map(n => ({ text: n + "⭐", callback_data: `rv:${n}:${o.id}` }))] } });
     }
     return { ok: true, code };
+  }
+
+  // номер «умер» (сессия на лолзе недействительна). Если код по нему ни разу не приходил — номер был нерабочим:
+  // проверяем гарантию на лолзе и бесплатно выдаём замену (до 2 раз за заказ, в первые 24 ч)
+  async numDead(o, msg) {
+    if (o.codeOk) return { ok: true, code: "", dead: true,
+      text: "Сессия номера закончилась. Если ты уже вошёл в аккаунт — всё в порядке, код больше не нужен. Если войти не успел — напиши в поддержку " + CONFIG.SUPPORT };
+    const old = o.num;
+    let g = "";
+    try { const r = await this.lzt(`/${old.item}/check-guarantee`, { method: "POST" }); g = String(r.message || r.status || JSON.stringify(r)).slice(0, 200); }
+    catch (e) { g = e.message; }
+    o.oldNums = (o.oldNums || []).concat([{ item: old.item, phone: old.phone, raw: old.raw, dead: msg, guar: g, at: Date.now() }]);
+    if ((o.repl || 0) >= 2 || Date.now() - o.doneAt > 24 * 3600e3) {
+      o.err = "номер нерабочий, автозамены закончились"; await this.putO(o);
+      await this.notifyOwners(`⚠️ Заказ #${o.id}: номер ${esc(old.phone)} нерабочий (${esc(msg)}). Автозамены исчерпаны — реши вручную.\nГарантия лолза (item ${old.item}): ${esc(g)}`);
+      return { ok: true, code: "", dead: true, text: "Номер оказался нерабочим. Мы уже знаем об этом — напиши в поддержку " + CONFIG.SUPPORT + ", заменим" };
+    }
+    o.repl = (o.repl || 0) + 1; o.num = null; o.status = "paid"; o.tries = 0; o.codeTries = 0; o.codeAt = 0; o.paidAt = Date.now(); o.err = "";
+    await this.putO(o);
+    const ids = await this.open(); if (!ids.includes(o.id)) { ids.push(o.id); await this.setOpen(ids); }
+    await this.wake(500);
+    await this.notifyOwners(`♻️ Заказ #${o.id}: номер ${esc(old.phone)} оказался нерабочим (${esc(msg)}) — покупаю замену (${o.repl}/2).\nГарантия лолза (item ${old.item}): ${esc(g)}`);
+    await this.tg("sendMessage", { chat_id: o.uid, text: `♻️ Номер ${old.phone} оказался нерабочим — бесплатно подбираем замену. Новый номер придёт сюда через минуту.` });
+    return { ok: true, code: "", replaced: true };
   }
 
   // ---------- кошелёк и выдача ----------
