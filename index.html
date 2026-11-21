@@ -455,7 +455,7 @@ async function numProbe() {
   const b = $("#nprb"); b.disabled = true; b.textContent = "Запрашиваю…";
   const cc = (S.A.settings.num.countries[0] || "UA"), r = await api("num_probe", { cc }); b.disabled = false; b.textContent = "🔍 Показать поля ответа лолза";
   if (!r.ok) return;
-  $("#nprv").textContent = `страна ${r.cc}: всего ${r.total}, на странице ${r.count}\nполя: ${r.keys}\n\nпример: ${JSON.stringify(r.sample, null, 1)}\n\nзначения country/spam в выдаче: ${JSON.stringify(r.seen)}`;
+  $("#nprv").textContent = `страна ${r.cc}: всего ${r.total}, на странице ${r.count}\nбез спамблока (spam=no): ${r.nc}\nсо спамблоком (spam=yes): ${r.ns}\nполя: ${r.keys}\n\nпример: ${JSON.stringify(r.sample, null, 1)}\n\nзначения country/spam в выдаче: ${JSON.stringify(r.seen)}`;
 }
 async function numCheck() {
   const b = $("#nchk"); b.disabled = true; b.textContent = "Проверяю… (до 20 сек)";

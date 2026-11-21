@@ -493,10 +493,11 @@ export class Store {
     this._nr = true;
     try {
       const cat = (await this.s.get("numcat")) || {}; let n = 0;
-      const order = st.num.countries.slice().sort((a, b) => ((cat[a] && cat[a].at) || 0) - ((cat[b] && cat[b].at) || 0));
+      const age = cc => cat[cc] && cat[cc].nc != null ? cat[cc].at || 0 : 0;   // без nc — данные старого формата, обновить в первую очередь
+      const order = st.num.countries.slice().sort((a, b) => age(a) - age(b));
       for (const cc of order) {
         if (n >= max) break;
-        if (!force && cat[cc] && Date.now() - cat[cc].at < 10 * 60e3) continue;
+        if (!force && cat[cc] && cat[cc].nc != null && Date.now() - cat[cc].at < 10 * 60e3) continue;
         n++;
         try {
           // два запроса к лолзу: без спамблока и со спамблоком — так фильтр работает всегда
@@ -767,7 +768,7 @@ export class Store {
       try { const r = await this.cp("getInvoices", { invoice_ids: cpW.map(o => o.inv).join(",") });
         for (const inv of r.items || []) await this.cpPaid(inv); } catch (e) { console.log("cp", e.message); }
     }
-    try { await this.numRefresh(st, 2); } catch (e) { console.log("num", e.message); }
+    try { await this.numRefresh(st, 3); } catch (e) { console.log("num", e.message); }
     await this.deliver();
     orders = await this.openOrders();
     if (orders.some(o => o.status === "paid" || o.status === "sending")) await this.wake(15000);
@@ -939,7 +940,9 @@ export class Store {
         const items = Array.isArray(j.items) ? j.items : [], first = items[0] || {}, pick = {};
         for (const k of Object.keys(first)) if (/spam|country|phone|premium|price|origin|title|item_id|state/i.test(k)) pick[k] = typeof first[k] === "object" ? JSON.stringify(first[k]).slice(0, 80) : String(first[k]).slice(0, 80);
         const seen = {}; for (const i of items) for (const k of Object.keys(i)) if (/country|spam/i.test(k)) { const key = k + "=" + String(i[k]).slice(0, 30); seen[key] = (seen[key] || 0) + 1; }
-        return { ok: true, cc, total: j.totalItems, count: items.length, keys: Object.keys(first).join(", "), sample: pick, seen };
+        let nc = "?", ns = "?";
+        try { nc = (await this.numList(cc, "clean")).total; ns = (await this.numList(cc, "spam")).total; } catch (e) { nc = ns = e.message; }
+        return { ok: true, cc, total: j.totalItems, count: items.length, nc, ns, keys: Object.keys(first).join(", "), sample: pick, seen };
       } catch (e) { return { ok: false, err: e.message }; }
     }
     if (act === "num_check") {
